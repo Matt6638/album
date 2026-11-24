@@ -860,7 +860,7 @@ window.addEventListener('scroll', () => { tip.hidden = true; }, {passive: true})
 
 /* ============ 宿泊マップ ============ */
 const M = {open: false, map: null, cluster: null, list: [], markers: new Map(), sel: -1, cardTimer: null, lib: null};
-const JAPAN = [[24.0, 122.9], [45.6, 146.0]];
+const JAPAN = [[23.6, 122.9], [45.6, 146.0]];
 function loadAsset(tag, url){
   return new Promise((res, rej) => {
     const el = document.createElement(tag);
