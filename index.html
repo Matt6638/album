@@ -111,6 +111,13 @@ h2.sec{font-size:13px;color:var(--sub);font-weight:600;margin:20px 4px 12px;lett
 .pin.sel{background:#f08a1a;width:22px;height:22px;margin:-3px}
 .mcl{display:flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:50%;background:rgba(31,60,136,.88);color:#fff;font-weight:700;font-size:13px;border:2.5px solid #fff;box-shadow:0 1px 5px rgba(0,0,0,.5)}
 .leaflet-tooltip.stay-tip{font-size:12.5px;line-height:1.55;white-space:pre;max-width:none}
+dialog#pwDlg{background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:14px;padding:20px 22px;width:min(380px,92vw)}
+dialog#pwDlg::backdrop{background:rgba(0,0,0,.6)}
+#pwDlg h3{margin:0 0 6px;font-size:16px}
+#pwDlg p{margin:0 0 12px;color:var(--sub);font-size:12.5px;line-height:1.7}
+#pwDlg input{width:100%;padding:10px 12px;margin:4px 0 10px;border-radius:8px;border:1px solid var(--line);background:#0f1012;color:var(--text);font-size:16px}
+#pwDlg .row{display:flex;gap:8px;justify-content:flex-end;margin-top:6px}
+#pwMsg{color:#ff8a80;font-size:13px;min-height:1.2em}
 @media (max-width:640px){
   .albums{grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:16px 12px}
   .grid{grid-template-columns:repeat(auto-fill,minmax(100px,1fr));gap:2px}
@@ -161,6 +168,16 @@ h2.sec{font-size:13px;color:var(--sub);font-weight:600;margin:20px 4px 12px;lett
   <div id="mCards"></div>
 </div>
 <div id="tip" hidden></div>
+<dialog id="pwDlg">
+  <form method="dialog" id="pwForm">
+    <h3 id="pwTitle"></h3>
+    <p id="pwNote"></p>
+    <input type="password" id="pw1" autocomplete="new-password" placeholder="パスコード">
+    <div id="pw2row"><input type="password" id="pw2" autocomplete="new-password" placeholder="もう一度入力"></div>
+    <div id="pwMsg"></div>
+    <div class="row"><button class="btn" id="pwCancel" type="button">やめる</button><button class="btn primary" id="pwOk" type="submit">OK</button></div>
+  </form>
+</dialog>
 
 <input type="file" id="dirInput" webkitdirectory multiple hidden>
 <input type="file" id="stayInput" accept=".json,application/json" hidden>
@@ -471,7 +488,7 @@ async function renderHome(){
         : '<small>カレンダーから作った「宿泊記録.json」を読み込むと、アルバムの表紙にカーソルを合わせたとき宿泊したホテルが出て、宿泊マップも使えます。</small>'}</div>
       <button class="btn primary" id="homeMap">🗾 宿泊マップ</button>
       <button class="btn" id="stayLoad">${STAYS ? '読み込み直す' : '宿泊データを読み込む'}</button>
-      ${STAYS ? '<button class="btn danger" id="stayDel">削除</button>' : ''}
+      ${STAYS ? '<button class="btn" id="stayLock" title="パスコードで暗号化したファイルを保存します">🔒 パスコード付きで保存</button><button class="btn danger" id="stayDel">削除</button>' : ''}
     </div>
     <div class="note">
       ${HAS_FSA
@@ -484,6 +501,7 @@ async function renderHome(){
   $('#addBtn').onclick = addFolder;
   $('#homeMap').onclick = openMap;
   $('#stayLoad').onclick = () => { $('#stayInput').value = ''; $('#stayInput').click(); };
+  if ($('#stayLock')) $('#stayLock').onclick = () => exportLocked().catch(e => alert('保存できませんでした：' + e.message));
   if ($('#stayDel')) $('#stayDel').onclick = async () => {
     if (!confirm('このブラウザに保存した宿泊データを削除します（元のファイルは消えません）。よろしいですか？')) return;
     await db.del('kv', 'stays'); STAYS = null; renderHome();
@@ -823,10 +841,82 @@ function validateStays(obj){
     for (const k of ['lat', 'lng']) if (s[k] != null && typeof s[k] !== 'number') throw new Error(`${i + 1}件目（${s.name}）：${k} が数値ではありません`);
   });
 }
+/* パスコードでの暗号化（PBKDF2-SHA256 で鍵を作り AES-256-GCM で暗号化。ブラウザ標準の Web Crypto を使用） */
+function toB64(u8){ let s = ''; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(s); }
+function fromB64(str){ const s = atob(str); const u = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i); return u; }
+async function deriveKey(pass, salt, iter){
+  const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(pass), 'PBKDF2', false, ['deriveKey']);
+  return crypto.subtle.deriveKey({name: 'PBKDF2', salt, iterations: iter, hash: 'SHA-256'}, base, {name: 'AES-GCM', length: 256}, false, ['encrypt', 'decrypt']);
+}
+async function lockStays(obj, pass){
+  const salt = crypto.getRandomValues(new Uint8Array(16)), iv = crypto.getRandomValues(new Uint8Array(12)), iter = 600000;
+  const key = await deriveKey(pass, salt, iter);
+  const ct = await crypto.subtle.encrypt({name: 'AES-GCM', iv}, key, new TextEncoder().encode(JSON.stringify(obj)));
+  return {format: 'photo-album-stays-locked', version: 1, note: 'フォトアルバムの宿泊データ（パスコードで暗号化）',
+          kdf: 'PBKDF2-SHA256', iter, cipher: 'AES-256-GCM', salt: toB64(salt), iv: toB64(iv), data: toB64(new Uint8Array(ct))};
+}
+async function unlockStays(locked, pass){
+  const key = await deriveKey(pass, fromB64(locked.salt), locked.iter);
+  const pt = await crypto.subtle.decrypt({name: 'AES-GCM', iv: fromB64(locked.iv)}, key, fromB64(locked.data));
+  return JSON.parse(new TextDecoder().decode(pt));
+}
+function askPass({title, note = '', confirm = false, msg = ''}){
+  return new Promise(res => {
+    const d = $('#pwDlg');
+    $('#pwTitle').textContent = title; $('#pwNote').textContent = note; $('#pwMsg').textContent = msg;
+    $('#pw1').value = ''; $('#pw2').value = ''; $('#pw2row').hidden = !confirm;
+    let done = false; const finish = v => { if (done) return; done = true; d.close(); res(v); };
+    $('#pwForm').onsubmit = e => {
+      e.preventDefault();
+      const a = $('#pw1').value;
+      if (!a) { $('#pwMsg').textContent = 'パスコードを入力してください'; return; }
+      if (confirm){
+        if (a.length < 6) { $('#pwMsg').textContent = '6文字以上にしてください'; return; }
+        if (a !== $('#pw2').value) { $('#pwMsg').textContent = '2回の入力が一致しません'; return; }
+      }
+      finish(a);
+    };
+    $('#pwCancel').onclick = () => finish(null);
+    d.oncancel = e => { e.preventDefault(); finish(null); };
+    d.showModal(); $('#pw1').focus();
+  });
+}
+async function exportLocked(){
+  if (!STAYS) return;
+  const p = await askPass({title: 'パスコードを設定', confirm: true,
+    note: 'このパスコードがないとファイルを開けなくなります。忘れると戻せないので、パスワードアプリなどに控えてください。'});
+  if (!p) return;
+  const {importedAt, fileName, minDate, maxDate, ...plain} = STAYS;
+  const locked = await lockStays(plain, p);
+  const back = await unlockStays(locked, p);   // 保存前に、同じパスコードで元に戻せるか確認
+  if (JSON.stringify(back) !== JSON.stringify(plain)) throw new Error('暗号化の確認に失敗しました');
+  const blob = new Blob([JSON.stringify(locked)], {type: 'application/json'});
+  const name = '宿泊記録_パスコード付き.json';
+  if (window.showSaveFilePicker){
+    try {
+      const h = await window.showSaveFilePicker({suggestedName: name, types: [{description: 'JSONファイル', accept: {'application/json': ['.json']}}]});
+      const w = await h.createWritable(); await w.write(blob); await w.close();
+      toast('パスコード付きのファイルを保存しました'); return;
+    } catch (e) { if (e.name === 'AbortError') return; }
+  }
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  toast('パスコード付きのファイルをダウンロードしました');
+}
+
 $('#stayInput').addEventListener('change', async e => {
   const f = e.target.files[0]; if (!f) return;
   try {
-    const obj = JSON.parse(await f.text());
+    let obj = JSON.parse(await f.text());
+    if (obj && obj.format === 'photo-album-stays-locked'){
+      let msg = '';
+      for (;;){
+        const p = await askPass({title: '宿泊データのパスコード', note: 'このファイルはパスコードで保護されています。', msg});
+        if (p === null) return;
+        try { obj = await unlockStays(obj, p); break; }
+        catch (err) { msg = 'パスコードが違います'; }
+      }
+    }
     validateStays(obj);
     const ds = obj.stays.map(s => s.checkin).sort();
     const rec = Object.assign({}, obj, {importedAt: Date.now(), fileName: f.name, minDate: ds[0] || '', maxDate: ds[ds.length - 1] || ''});
