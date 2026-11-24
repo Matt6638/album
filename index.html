@@ -1,0 +1,754 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>フォトアルバム</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#111214">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-192.png">
+<style>
+:root{--bg:#111214;--panel:#1b1d21;--panel2:#25282e;--text:#ececee;--sub:#9a9ca3;--accent:#3d6fe0;--line:#2c2f35}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Hiragino Kaku Gothic ProN","Noto Sans JP",sans-serif;-webkit-font-smoothing:antialiased}
+button{font:inherit}
+#bar{position:sticky;top:0;z-index:10;display:flex;align-items:center;gap:8px;padding:10px 16px;background:rgba(17,18,20,.92);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border-bottom:1px solid var(--line);min-height:54px}
+#crumbs{display:flex;flex-wrap:wrap;align-items:center;gap:2px;font-size:15px;min-width:0;flex:1}
+#crumbs button{background:none;border:0;color:var(--sub);cursor:pointer;padding:4px 6px;border-radius:6px;max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#crumbs button:hover{background:var(--panel2);color:var(--text)}
+#crumbs .cur{color:var(--text);font-weight:600;padding:4px 6px}
+#crumbs .sep{color:#555;padding:0 2px}
+.btn{background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:7px 12px;font-size:14px;cursor:pointer;white-space:nowrap}
+.btn:hover{border-color:#444a54}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.danger{color:#ff8a80}
+select.btn{appearance:none;-webkit-appearance:none;padding-right:26px;background-image:linear-gradient(45deg,transparent 50%,#9a9ca3 50%),linear-gradient(135deg,#9a9ca3 50%,transparent 50%);background-position:calc(100% - 14px) 52%,calc(100% - 9px) 52%;background-size:5px 5px;background-repeat:no-repeat}
+.iconbtn{background:none;border:0;color:var(--text);font-size:20px;cursor:pointer;width:36px;height:36px;border-radius:8px;display:flex;align-items:center;justify-content:center;flex:none}
+.iconbtn:hover{background:var(--panel2)}
+main{padding:16px 16px 80px;max-width:1700px;margin:0 auto}
+h2.sec{font-size:13px;color:var(--sub);font-weight:600;margin:20px 4px 12px;letter-spacing:.05em}
+.loading,.empty{color:var(--sub);padding:40px 8px;text-align:center}
+.errbox{background:#2a1d1d;border:1px solid #4a2a2a;border-radius:10px;padding:16px;margin:20px 0;line-height:1.7}
+/* アルバム一覧 */
+.albums{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:22px 18px}
+.album{cursor:pointer;text-align:left;background:none;border:0;color:inherit;padding:0;display:flex;flex-direction:column;align-self:start;width:100%}
+.album .cover{aspect-ratio:1;border-radius:12px;overflow:hidden;background:var(--panel);position:relative;box-shadow:0 1px 0 #ffffff08 inset}
+.album:hover .cover img{transform:scale(1.03)}
+.album .cover img{width:100%;height:100%;object-fit:cover;display:block;opacity:0;transition:opacity .25s,transform .3s}
+.album .cover img.ok{opacity:1}
+.album .cover .fold{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:44px;color:#3a3e46}
+.album .t{margin-top:9px;font-size:14.5px;font-weight:600;line-height:1.4;word-break:break-all}
+.album .d{font-size:12.5px;color:#c9cbd1;margin-top:1px}
+.album .s{font-size:12px;color:var(--sub);margin-top:2px}
+/* 写真グリッド */
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:4px}
+.tile{position:relative;aspect-ratio:1;background:var(--panel);border:0;padding:0;cursor:pointer;overflow:hidden;border-radius:3px;display:block;width:100%}
+.tile img{width:100%;height:100%;object-fit:cover;display:block;opacity:0;transition:opacity .2s}
+.tile img.ok{opacity:1}
+.tile:focus-visible,.album:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.badge{position:absolute;right:6px;bottom:6px;background:rgba(0,0,0,.62);color:#fff;font-size:11.5px;padding:2px 7px;border-radius:10px;pointer-events:none}
+.ph{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--sub);font-size:11px;padding:8px;text-align:center;word-break:break-all;gap:4px}
+.ph b{font-size:22px;color:#4a4e57;font-weight:400}
+.summary{color:var(--sub);font-size:13px;margin:2px 4px 0}
+/* ホーム */
+.home{max-width:760px;margin:30px auto}
+.home h1{font-size:26px;margin:0 0 8px}
+.home p.lead{color:var(--sub);line-height:1.8;margin:0 0 22px;font-size:14.5px}
+.libs{display:flex;flex-direction:column;gap:10px;margin:18px 0}
+.lib{display:flex;align-items:center;gap:12px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+.lib .nm{font-weight:600;font-size:16px;flex:1;min-width:0;word-break:break-all}
+.lib .nm small{display:block;color:var(--sub);font-weight:400;font-size:12px;margin-top:3px}
+.note{background:var(--panel);border-radius:10px;padding:14px 16px;color:var(--sub);font-size:13px;line-height:1.8;margin-top:28px}
+.note b{color:var(--text)}
+/* ビューア */
+#viewer{position:fixed;inset:0;background:#000;z-index:100;display:flex;flex-direction:column;user-select:none;-webkit-user-select:none}
+#viewer[hidden]{display:none}
+#vstage{flex:1;position:relative;display:flex;align-items:center;justify-content:center;overflow:hidden;touch-action:pan-y pinch-zoom}
+#vstage img,#vstage video{max-width:100%;max-height:100%;object-fit:contain;display:block}
+#vstage img{width:100%;height:100%}
+#vstage .msg{color:#bbb;text-align:center;line-height:1.8;padding:20px}
+.vtop{position:absolute;top:0;left:0;right:0;display:flex;align-items:center;gap:10px;padding:12px 16px 26px;background:linear-gradient(rgba(0,0,0,.75),rgba(0,0,0,0));z-index:3;transition:opacity .3s}
+.vtop .info{flex:1;min-width:0;color:#eee}
+.vtop .info .fn{font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.vtop .info .mt{font-size:12px;color:#aaa;margin-top:2px}
+.vtop .btn{background-color:rgba(255,255,255,.12);border-color:transparent;color:#fff}
+.vtop .btn.on{background-color:var(--accent)}
+.vtop select.btn{background-color:rgba(255,255,255,.12)}
+.vtop select.btn option{color:#000}
+.vnav{position:absolute;top:50%;transform:translateY(-50%);width:54px;height:54px;border-radius:50%;background:rgba(255,255,255,.12);border:0;color:#fff;font-size:26px;cursor:pointer;z-index:3;transition:opacity .3s;display:flex;align-items:center;justify-content:center}
+.vnav:hover{background:rgba(255,255,255,.22)}
+.vnav.prev{left:14px}.vnav.next{right:14px}
+#viewer.idle .vtop,#viewer.idle .vnav{opacity:0;pointer-events:none}
+#viewer.idle{cursor:none}
+.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#2b2e34;color:#fff;padding:10px 16px;border-radius:10px;font-size:14px;z-index:200;box-shadow:0 6px 20px rgba(0,0,0,.4)}
+@media (max-width:640px){
+  .albums{grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:16px 12px}
+  .grid{grid-template-columns:repeat(auto-fill,minmax(100px,1fr));gap:2px}
+  main{padding:10px 8px 60px}
+  .vnav{display:none}
+  #bar .hide-sm{display:none}
+}
+</style>
+</head>
+<body>
+<header id="bar">
+  <button id="homeBtn" class="iconbtn" title="フォルダ一覧へ" aria-label="フォルダ一覧へ">⌂</button>
+  <nav id="crumbs"></nav>
+  <select id="sortSel" class="btn hide-sm" title="アルバムの並び順" hidden>
+    <option value="desc">新しい順</option>
+    <option value="asc">古い順</option>
+  </select>
+  <button id="slideAllBtn" class="btn" hidden>▶ スライドショー</button>
+</header>
+<main id="main"></main>
+
+<div id="viewer" hidden>
+  <div class="vtop">
+    <button id="vClose" class="iconbtn" title="閉じる（Esc）" aria-label="閉じる" style="color:#fff">✕</button>
+    <div class="info"><div class="fn" id="vName"></div><div class="mt" id="vMeta"></div></div>
+    <select id="vInterval" class="btn" title="スライドショーの間隔">
+      <option value="3">3秒</option><option value="5">5秒</option><option value="10">10秒</option>
+    </select>
+    <button id="vSlide" class="btn" title="スライドショー（スペース）">▶ スライド</button>
+    <button id="vFull" class="btn" title="全画面（F）">全画面</button>
+  </div>
+  <button class="vnav prev" id="vPrev" aria-label="前へ">‹</button>
+  <button class="vnav next" id="vNext" aria-label="次へ">›</button>
+  <div id="vstage"></div>
+</div>
+
+<input type="file" id="dirInput" webkitdirectory multiple hidden>
+
+<script>
+'use strict';
+/* ============ 基本設定 ============ */
+const IMG_EXT = new Set(['jpg','jpeg','jpe','png','gif','webp','bmp','avif','heic','heif']);
+const VID_EXT = new Set(['mp4','mov','m4v','webm','mkv','3gp']);
+const HEIC_EXT = new Set(['heic','heif']);
+const SKIP_DIRS = new Set(['$RECYCLE.BIN','System Volume Information']);
+const THUMB_W = 480;
+const HAS_FSA = typeof window.showDirectoryPicker === 'function';
+const collator = new Intl.Collator('ja', {numeric:true, sensitivity:'base'});
+const $ = s => document.querySelector(s);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const extOf = n => { const i = n.lastIndexOf('.'); return i < 0 ? '' : n.slice(i+1).toLowerCase(); };
+function kindOf(n){
+  if (n.startsWith('.')) return null;           // ._xxx（Macの補助ファイル）や隠しファイルは除外
+  const e = extOf(n);
+  if (IMG_EXT.has(e)) return 'image';
+  if (VID_EXT.has(e)) return 'video';
+  return null;
+}
+function toast(msg, ms=3000){
+  const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg;
+  document.body.appendChild(t); setTimeout(() => t.remove(), ms);
+}
+function fmtDur(s){
+  if (!isFinite(s) || s <= 0) return '';
+  s = Math.round(s); const h = Math.floor(s/3600), m = Math.floor(s%3600/60), sec = s%60;
+  return (h ? h + ':' + String(m).padStart(2,'0') : m) + ':' + String(sec).padStart(2,'0');
+}
+function fmtSize(b){
+  if (b >= 1073741824) return (b/1073741824).toFixed(2) + ' GB';
+  if (b >= 1048576) return (b/1048576).toFixed(1) + ' MB';
+  return Math.max(1, Math.round(b/1024)) + ' KB';
+}
+function fmtDate(ms){
+  const d = new Date(ms);
+  return `${d.getFullYear()}/${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+}
+/* フォルダ名の先頭が日付（260515 や 20260515）なら日付と題名に分けて表示（元の名前は変更しない） */
+function parseName(name){
+  const nowYY = new Date().getFullYear() % 100;
+  let m = name.match(/^(\d{2})(\d{2})(\d{2})(?:[_\-\s　]+(.*))?$/);
+  if (m){
+    const yy = +m[1], mo = +m[2], d = +m[3];
+    if (mo >= 1 && mo <= 12 && d >= 1 && d <= 31){
+      const y = yy <= nowYY + 1 ? 2000 + yy : 1900 + yy;
+      return {title: m[4] || '', date: `${y}年${mo}月${d}日`};
+    }
+  }
+  m = name.match(/^((?:19|20)\d{2})[-_.]?(\d{2})[-_.]?(\d{2})(?:[_\-\s　]+(.*))?$/);
+  if (m){
+    const mo = +m[2], d = +m[3];
+    if (mo >= 1 && mo <= 12 && d >= 1 && d <= 31) return {title: m[4] || '', date: `${+m[1]}年${mo}月${d}日`};
+  }
+  return {title: name, date: ''};
+}
+
+/* ============ IndexedDB（サムネイルと登録フォルダの保存） ============ */
+const db = (() => {
+  let p;
+  const open = () => p ||= new Promise((res, rej) => {
+    const r = indexedDB.open('photo-album', 1);
+    r.onupgradeneeded = () => { const d = r.result; d.createObjectStore('thumbs'); d.createObjectStore('libs', {keyPath:'id'}); };
+    r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+  });
+  async function tx(store, mode, fn){
+    const d = await open();
+    return new Promise((res, rej) => {
+      const t = d.transaction(store, mode); const req = fn(t.objectStore(store));
+      t.oncomplete = () => res(req ? req.result : undefined);
+      t.onerror = () => rej(t.error); t.onabort = () => rej(t.error);
+    });
+  }
+  return {
+    get: (s, k) => tx(s, 'readonly', st => st.get(k)),
+    put: (s, v, k) => tx(s, 'readwrite', st => k === undefined ? st.put(v) : st.put(v, k)),
+    del: (s, k) => tx(s, 'readwrite', st => st.delete(k)),
+    all: s => tx(s, 'readonly', st => st.getAll()),
+    clear: s => tx(s, 'readwrite', st => st.clear()),
+  };
+})();
+
+/* ============ フォルダの読み取り ============ */
+let lib = null;            // {type:'fs'|'list', name, root}
+const listCache = new Map(); // path -> Promise<{dirs, media}>
+const metaCache = new Map(); // path -> Promise<{photos, videos, dirCount, cover}>
+const scrollPos = new Map();
+
+async function listDir(node){
+  if (listCache.has(node.path)) return listCache.get(node.path);
+  const p = (async () => {
+    const dirs = [], media = [];
+    if (lib.type === 'fs'){
+      for await (const [name, h] of node.ref.entries()){
+        if (name.startsWith('.')) continue;
+        if (h.kind === 'directory'){
+          if (!SKIP_DIRS.has(name)) dirs.push({name, path: node.path + '/' + name, ref: h});
+        } else {
+          const k = kindOf(name);
+          if (k) media.push({name, path: node.path + '/' + name, kind: k, ref: h});
+        }
+      }
+    } else {
+      for (const [name, child] of node.ref.dirs) dirs.push({name, path: node.path + '/' + name, ref: child});
+      for (const f of node.ref.files) media.push({name: f.name, path: node.path + '/' + f.name, kind: kindOf(f.name), ref: f});
+    }
+    return {dirs, media};
+  })();
+  listCache.set(node.path, p);
+  p.catch(() => listCache.delete(node.path));
+  return p;
+}
+const getFile = item => lib.type === 'fs' ? item.ref.getFile() : Promise.resolve(item.ref);
+const sortOrder = () => localStorage.getItem('albumSort') || 'desc';
+const sortDirs = dirs => [...dirs].sort((a, b) => sortOrder() === 'asc' ? collator.compare(a.name, b.name) : collator.compare(b.name, a.name));
+const sortMedia = media => [...media].sort((a, b) => collator.compare(a.name, b.name));
+
+function folderMeta(node, depth = 0){
+  const key = node.path + '|' + sortOrder();
+  if (metaCache.has(key)) return metaCache.get(key);
+  const p = (async () => {
+    const {dirs, media} = await listDir(node);
+    const sorted = sortMedia(media);
+    let cover = sorted.find(m => m.kind === 'image') || sorted[0] || null;
+    if (!cover && depth < 3){
+      for (const d of sortDirs(dirs)){
+        const m = await folderMeta(d, depth + 1);
+        if (m.cover){ cover = m.cover; break; }
+      }
+    }
+    return {photos: media.filter(m => m.kind === 'image').length, videos: media.filter(m => m.kind === 'video').length, dirCount: dirs.length, cover};
+  })();
+  metaCache.set(key, p);
+  p.catch(() => metaCache.delete(key));
+  return p;
+}
+
+/* ============ サムネイル生成（同時実行数を制限・見えているものを優先） ============ */
+function makeQueue(limit){
+  let active = 0; const stack = [];
+  function pump(){
+    while (active < limit && stack.length){
+      const job = stack.pop();               // 後から頼まれた（＝今見えている）ものを先に
+      if (!job.wanted()){ job.reject(new Error('cancelled')); continue; }
+      active++;
+      job.fn().then(job.resolve, job.reject).finally(() => { active--; pump(); });
+    }
+  }
+  return (fn, wanted) => new Promise((resolve, reject) => { stack.push({fn, wanted, resolve, reject}); pump(); });
+}
+const imgQueue = makeQueue(4);
+const vidQueue = makeQueue(2);
+const thumbMem = new Map();   // key -> {url, dur}
+const thumbBusy = new Map();  // key -> Promise
+
+let heicLib = null;
+function loadHeic(){
+  return heicLib ||= new Promise((res, rej) => {
+    const s = document.createElement('script'); s.src = 'vendor/heic2any.min.js';
+    s.onload = () => res(window.heic2any);
+    s.onerror = () => { heicLib = null; rej(new Error('HEIC変換ライブラリを読み込めませんでした')); };
+    document.head.appendChild(s);
+  });
+}
+async function heicToJpeg(blob){
+  const h = await loadHeic();
+  const out = await h({blob, toType: 'image/jpeg', quality: 0.9});
+  return Array.isArray(out) ? out[0] : out;
+}
+function imgFromBlob(blob){
+  return new Promise((res, rej) => {
+    const url = URL.createObjectURL(blob); const im = new Image();
+    im.onload = () => { URL.revokeObjectURL(url); res(im); };
+    im.onerror = () => { URL.revokeObjectURL(url); rej(new Error('decode')); };
+    im.src = url;
+  });
+}
+function canvasToBlob(c){ return new Promise((res, rej) => c.toBlob(b => b ? res(b) : rej(new Error('toBlob')), 'image/jpeg', 0.8)); }
+async function drawThumb(src, w, h){
+  const scale = Math.min(1, THUMB_W / w);
+  const c = document.createElement('canvas');
+  c.width = Math.max(1, Math.round(w * scale)); c.height = Math.max(1, Math.round(h * scale));
+  const ctx = c.getContext('2d'); ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(src, 0, 0, c.width, c.height);
+  return canvasToBlob(c);
+}
+async function decodeToDrawable(blob){
+  try {
+    return await createImageBitmap(blob, {resizeWidth: THUMB_W, resizeQuality: 'medium', imageOrientation: 'from-image'});
+  } catch (e) {
+    return await imgFromBlob(blob);     // createImageBitmap の縮小指定に対応していないブラウザ向け
+  }
+}
+async function imageThumb(file, name){
+  let src;
+  try { src = await decodeToDrawable(file); }
+  catch (e) {
+    if (!HEIC_EXT.has(extOf(name))) throw e;
+    src = await decodeToDrawable(await heicToJpeg(file));   // HEIC（iPhone写真）はChrome等で読めないため変換
+  }
+  const w = src.width || src.naturalWidth, h = src.height || src.naturalHeight;
+  const blob = await drawThumb(src, w, h);
+  if (src.close) src.close();
+  return {blob, dur: 0};
+}
+function videoThumb(file){
+  return new Promise((res, rej) => {
+    const v = document.createElement('video');
+    v.muted = true; v.playsInline = true; v.preload = 'metadata';
+    const url = URL.createObjectURL(file); let done = false;
+    const finish = (err, val) => {
+      if (done) return; done = true; clearTimeout(timer);
+      v.removeAttribute('src'); v.load(); URL.revokeObjectURL(url);
+      err ? rej(err) : res(val);
+    };
+    const timer = setTimeout(() => finish(new Error('timeout')), 20000);
+    v.onloadedmetadata = () => {
+      const d = v.duration;
+      v.currentTime = (isFinite(d) && d > 0) ? Math.min(1, d * 0.1) : 0.1;
+    };
+    v.onseeked = async () => {
+      try {
+        if (!v.videoWidth) throw new Error('no video track');
+        const blob = await drawThumb(v, v.videoWidth, v.videoHeight);
+        finish(null, {blob, dur: v.duration});
+      } catch (e) { finish(e); }
+    };
+    v.onerror = () => finish(new Error('video decode'));
+    v.src = url;
+  });
+}
+async function getThumb(item, wanted){
+  const file = await getFile(item);
+  const key = item.path + '|' + file.size + '|' + file.lastModified;
+  if (thumbMem.has(key)) return thumbMem.get(key);
+  if (thumbBusy.has(key)) return thumbBusy.get(key);
+  const p = (async () => {
+    const cached = await db.get('thumbs', key).catch(() => null);
+    let blob, dur;
+    if (cached){ ({blob, dur} = cached); }
+    else {
+      const q = item.kind === 'video' ? vidQueue : imgQueue;
+      ({blob, dur} = await q(() => item.kind === 'video' ? videoThumb(file) : imageThumb(file, item.name), wanted));
+      db.put('thumbs', {blob, dur}, key).catch(() => {});
+    }
+    const r = {url: URL.createObjectURL(blob), dur};
+    thumbMem.set(key, r);
+    return r;
+  })();
+  thumbBusy.set(key, p);
+  p.finally(() => thumbBusy.delete(key));
+  return p;
+}
+
+/* 画面に入った要素だけ読み込む */
+const visible = new WeakMap();
+const io = new IntersectionObserver(entries => {
+  for (const en of entries){
+    visible.set(en.target, en.isIntersecting);
+    if (en.isIntersecting && en.target._load && !en.target._started){
+      en.target._started = true;
+      en.target._load().catch(() => { en.target._started = false; });
+    }
+  }
+}, {rootMargin: '600px 0px'});
+function observe(el, loader){ el._load = loader; io.observe(el); }
+const wantedFn = el => () => el.isConnected && visible.get(el) !== false;
+
+/* ============ 画面表示 ============ */
+const main = $('#main'), crumbs = $('#crumbs');
+let current = null;        // 表示中のフォルダノード
+let trail = [];            // ルートから現在までのノード列
+
+function setHeaderForHome(){
+  crumbs.innerHTML = '<span class="cur">フォトアルバム</span>';
+  $('#sortSel').hidden = true; $('#slideAllBtn').hidden = true;
+}
+
+async function renderHome(){
+  current = null; trail = [];
+  setHeaderForHome();
+  document.title = 'フォトアルバム';
+  let libs = [];
+  if (HAS_FSA) libs = (await db.all('libs').catch(() => [])).sort((a, b) => a.added - b.added);
+  main.innerHTML = `
+  <div class="home">
+    <h1>フォトアルバム</h1>
+    <p class="lead">外付けハードディスクなどのフォルダを選ぶと、その中のフォルダをアルバムとして表示します。写真・動画はこのパソコンの中で読み込むだけで、インターネットへ送信されることはありません。</p>
+    <button class="btn primary" id="addBtn">＋ フォルダを選ぶ</button>
+    ${HAS_FSA ? `<div class="libs">${libs.map(l => `
+      <div class="lib" data-id="${esc(l.id)}">
+        <div class="nm">${esc(l.name)}<small>登録日 ${esc(fmtDate(l.added))}</small></div>
+        <button class="btn primary" data-act="open">開く</button>
+        <button class="btn danger" data-act="remove" title="一覧から外す（ディスク上のファイルは消えません）">外す</button>
+      </div>`).join('')}</div>` : ''}
+    <div class="note">
+      ${HAS_FSA
+        ? '<b>使い方</b>　「フォルダを選ぶ」で外付けHDDの中のフォルダ（例：人物フォルダ）を選ぶと、次回からはこの一覧から「開く」だけで表示できます。開くたびにブラウザが「閲覧を許可しますか」と確認します。<br>サムネイルは初回だけ作成し、このブラウザ内に保存するので、2回目以降は速く表示されます。'
+        : '<b>このブラウザでは選んだフォルダを記憶できません。</b>開くたびにフォルダを選び直してください。Google Chrome または Microsoft Edge で開くと、フォルダを登録して次回から一覧から開けます。'}
+      <br>対応形式：写真（JPEG・PNG・HEIC・WebP など）、動画（MP4・MOV など）。動画が再生できるかはブラウザとパソコンの対応状況によります。
+      <div style="margin-top:10px"><button class="btn" id="clearThumbs">保存済みサムネイルを削除</button> <span id="usage"></span></div>
+    </div>
+  </div>`;
+  $('#addBtn').onclick = addFolder;
+  $('#clearThumbs').onclick = async () => {
+    if (!confirm('このブラウザに保存したサムネイルを削除します（写真・動画そのものは消えません）。よろしいですか？')) return;
+    await db.clear('thumbs'); thumbMem.clear(); toast('サムネイルを削除しました'); showUsage();
+  };
+  main.querySelectorAll('.lib').forEach(row => {
+    const rec = libs.find(l => l.id === row.dataset.id);
+    row.querySelector('[data-act=open]').onclick = () => openLibrary(rec);
+    row.querySelector('[data-act=remove]').onclick = async () => {
+      if (!confirm(`「${rec.name}」を一覧から外します（ディスク上のファイルは消えません）。よろしいですか？`)) return;
+      await db.del('libs', rec.id); renderHome();
+    };
+  });
+  showUsage();
+}
+async function showUsage(){
+  const el = $('#usage'); if (!el || !navigator.storage?.estimate) return;
+  try { const e = await navigator.storage.estimate(); el.textContent = `（このアプリの保存容量：約 ${fmtSize(e.usage || 0)}）`; el.style.color = 'var(--sub)'; } catch (e) {}
+}
+
+async function addFolder(){
+  if (!HAS_FSA){ $('#dirInput').value = ''; $('#dirInput').click(); return; }
+  let h;
+  try { h = await window.showDirectoryPicker({id: 'photo-album', mode: 'read'}); }
+  catch (e) { if (e.name !== 'AbortError') toast('フォルダを開けませんでした：' + e.message); return; }
+  const libs = await db.all('libs').catch(() => []);
+  for (const l of libs){
+    try { if (await l.handle.isSameEntry(h)) return openLibrary(l); } catch (e) {}
+  }
+  const rec = {id: (crypto.randomUUID ? crypto.randomUUID() : String(Date.now())), name: h.name, handle: h, added: Date.now()};
+  await db.put('libs', rec).catch(() => toast('フォルダの登録を保存できませんでした（今回だけ表示します）'));
+  if (navigator.storage?.persist) navigator.storage.persist().catch(() => {});
+  openLibrary(rec);
+}
+
+$('#dirInput').addEventListener('change', e => {
+  const files = [...e.target.files];
+  if (!files.length) return;
+  const rootName = (files[0].webkitRelativePath || files[0].name).split('/')[0];
+  const root = {dirs: new Map(), files: []};
+  for (const f of files){
+    const parts = (f.webkitRelativePath || f.name).split('/');
+    if (parts.some(p => p.startsWith('.')) || !kindOf(f.name)) continue;
+    let cur = root;
+    for (let i = 1; i < parts.length - 1; i++){
+      if (!cur.dirs.has(parts[i])) cur.dirs.set(parts[i], {dirs: new Map(), files: []});
+      cur = cur.dirs.get(parts[i]);
+    }
+    cur.files.push(f);
+  }
+  startLibrary({type: 'list', name: rootName}, {name: rootName, path: rootName, ref: root});
+});
+
+async function openLibrary(rec){
+  try {
+    let perm = await rec.handle.queryPermission({mode: 'read'});
+    if (perm !== 'granted') perm = await rec.handle.requestPermission({mode: 'read'});
+    if (perm !== 'granted'){ toast('閲覧が許可されませんでした'); return; }
+  } catch (e) {
+    toast('フォルダを開けませんでした。外付けHDDが接続されているか確認してください'); return;
+  }
+  startLibrary({type: 'fs', name: rec.name}, {name: rec.name, path: rec.name, ref: rec.handle});
+}
+function startLibrary(l, root){
+  lib = l; lib.root = root;
+  listCache.clear(); metaCache.clear(); scrollPos.clear();
+  trail = [root];
+  history.pushState({depth: 0}, '');
+  renderFolder();
+}
+
+function renderCrumbs(){
+  crumbs.innerHTML = '';
+  trail.forEach((n, i) => {
+    if (i){ const s = document.createElement('span'); s.className = 'sep'; s.textContent = '›'; crumbs.appendChild(s); }
+    if (i === trail.length - 1){
+      const c = document.createElement('span'); c.className = 'cur'; c.textContent = n.name; crumbs.appendChild(c);
+    } else {
+      const b = document.createElement('button'); b.textContent = n.name; b.title = n.name;
+      b.onclick = () => history.go(i - (trail.length - 1));
+      crumbs.appendChild(b);
+    }
+  });
+}
+
+function goInto(node){
+  if (current) scrollPos.set(current.path, window.scrollY);
+  trail.push(node);
+  history.pushState({depth: trail.length - 1}, '');
+  renderFolder();
+}
+
+let renderToken = 0;
+async function renderFolder(){
+  const node = trail[trail.length - 1];
+  current = node;
+  const token = ++renderToken;
+  renderCrumbs();
+  document.title = node.name + ' - フォトアルバム';
+  main.innerHTML = '<div class="loading">読み込み中…</div>';
+  let listing;
+  try { listing = await listDir(node); }
+  catch (e) {
+    if (token !== renderToken) return;
+    main.innerHTML = `<div class="errbox">フォルダを読み込めませんでした。<br>外付けHDDが接続されているか、フォルダの場所が変わっていないか確認してください。<br><small style="color:var(--sub)">${esc(e.name + ': ' + e.message)}</small><br><br><button class="btn" id="retry">再読み込み</button></div>`;
+    $('#retry').onclick = () => { listCache.delete(node.path); renderFolder(); };
+    return;
+  }
+  if (token !== renderToken) return;
+  const dirs = sortDirs(listing.dirs), media = sortMedia(listing.media);
+  $('#sortSel').hidden = dirs.length < 2; $('#sortSel').value = sortOrder();
+  $('#slideAllBtn').hidden = media.length === 0;
+  $('#slideAllBtn').onclick = () => openViewer(media, 0, true);
+
+  main.innerHTML = '';
+  if (!dirs.length && !media.length){
+    main.innerHTML = '<div class="empty">このフォルダには写真・動画もフォルダもありません。</div>'; return;
+  }
+  if (dirs.length){
+    const h = document.createElement('h2'); h.className = 'sec'; h.textContent = `アルバム（${dirs.length}）`; main.appendChild(h);
+    const wrap = document.createElement('div'); wrap.className = 'albums'; main.appendChild(wrap);
+    for (const d of dirs) wrap.appendChild(albumCard(d));
+  }
+  if (media.length){
+    const p = media.filter(m => m.kind === 'image').length, v = media.length - p;
+    const h = document.createElement('h2'); h.className = 'sec';
+    h.textContent = `写真・動画（${[p ? '写真 ' + p : '', v ? '動画 ' + v : ''].filter(Boolean).join('・')}）`;
+    main.appendChild(h);
+    const grid = document.createElement('div'); grid.className = 'grid'; main.appendChild(grid);
+    media.forEach((m, i) => grid.appendChild(mediaTile(m, () => openViewer(media, i, false))));
+  }
+  const y = scrollPos.get(node.path) || 0;
+  requestAnimationFrame(() => window.scrollTo(0, y));
+}
+
+function albumCard(d){
+  const {title, date} = parseName(d.name);
+  const el = document.createElement('button'); el.className = 'album'; el.title = d.name;
+  el.innerHTML = `<div class="cover"><div class="fold">▢</div></div>
+    <div class="t">${esc(title || date)}</div>${title && date ? `<div class="d">${esc(date)}</div>` : ''}<div class="s">　</div>`;
+  el.onclick = () => goInto(d);
+  observe(el, async () => {
+    let meta;
+    try { meta = await folderMeta(d); }
+    catch (e) { el.querySelector('.s').textContent = '読み込めません'; return; }
+    const parts = [];
+    if (meta.photos) parts.push(`写真 ${meta.photos}`);
+    if (meta.videos) parts.push(`動画 ${meta.videos}`);
+    if (meta.dirCount) parts.push(`フォルダ ${meta.dirCount}`);
+    el.querySelector('.s').textContent = parts.join('・') || '空';
+    if (meta.cover){
+      let t;
+      try { t = await getThumb(meta.cover, wantedFn(el)); }
+      catch (e) { if (e.message === 'cancelled') throw e; return; }
+      const img = new Image(); img.alt = ''; img.onload = () => img.classList.add('ok'); img.src = t.url;
+      const cv = el.querySelector('.cover'); cv.querySelector('.fold')?.remove(); cv.appendChild(img);
+    }
+  });
+  return el;
+}
+
+function mediaTile(m, onOpen){
+  const el = document.createElement('button'); el.className = 'tile'; el.title = m.name;
+  el.innerHTML = m.kind === 'video' ? '<span class="badge">▶</span>' : '';
+  el.onclick = onOpen;
+  observe(el, async () => {
+    try {
+      const t = await getThumb(m, wantedFn(el));
+      const img = new Image(); img.alt = ''; img.onload = () => img.classList.add('ok'); img.src = t.url;
+      el.prepend(img);
+      if (m.kind === 'video' && t.dur) el.querySelector('.badge').textContent = '▶ ' + fmtDur(t.dur);
+    } catch (e) {
+      if (e.message === 'cancelled') throw e;     // 画面外に出たので後で再試行
+      el.insertAdjacentHTML('afterbegin', `<div class="ph"><b>${m.kind === 'video' ? '▶' : '▢'}</b>${esc(m.name)}</div>`);
+    }
+  });
+  return el;
+}
+
+$('#sortSel').onchange = e => { localStorage.setItem('albumSort', e.target.value); if (current){ scrollPos.set(current.path, 0); renderFolder(); } };
+$('#homeBtn').onclick = () => { if (trail.length) history.go(-(trail.length)); else renderHome(); };
+
+/* ============ ビューア ============ */
+const viewer = $('#viewer'), stage = $('#vstage');
+const V = {items: [], index: 0, slide: false, timer: null, url: null, token: 0, open: false};
+
+function openViewer(items, index, slideshow){
+  V.items = items; V.index = index; V.open = true;
+  viewer.hidden = false;
+  history.pushState({depth: trail.length - 1, viewer: true}, '');
+  setSlide(!!slideshow);
+  show();
+  poke();
+}
+function closeViewerUI(){
+  V.open = false; setSlide(false);
+  stage.innerHTML = ''; if (V.url){ URL.revokeObjectURL(V.url); V.url = null; }
+  viewer.hidden = true;
+  if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+}
+async function show(){
+  const token = ++V.token;
+  const item = V.items[V.index];
+  clearTimeout(V.timer);
+  $('#vName').textContent = item.name;
+  $('#vMeta').textContent = `${V.index + 1} / ${V.items.length}`;
+  let file;
+  try { file = await getFile(item); }
+  catch (e) { if (token === V.token) stage.innerHTML = '<div class="msg">ファイルを読み込めませんでした。<br>外付けHDDが接続されているか確認してください。</div>'; return; }
+  if (token !== V.token) return;
+  $('#vMeta').textContent = `${V.index + 1} / ${V.items.length}　${fmtDate(file.lastModified)}　${fmtSize(file.size)}`;
+  if (V.url){ URL.revokeObjectURL(V.url); V.url = null; }
+  stage.innerHTML = '';
+  if (item.kind === 'image'){
+    let blob = file;
+    const img = new Image(); img.alt = item.name; img.decoding = 'async';
+    const ok = await new Promise(res => {
+      img.onload = () => res(true); img.onerror = () => res(false);
+      V.url = URL.createObjectURL(blob); img.src = V.url;
+    });
+    if (token !== V.token) return;
+    if (!ok && HEIC_EXT.has(extOf(item.name))){
+      stage.innerHTML = '<div class="msg">HEIC画像を変換しています…</div>';
+      try { blob = await heicToJpeg(file); } catch (e) { blob = null; }
+      if (token !== V.token) return;
+      if (blob){ URL.revokeObjectURL(V.url); V.url = URL.createObjectURL(blob); img.src = V.url; await img.decode().catch(() => {}); stage.innerHTML = ''; stage.appendChild(img); }
+      else stage.innerHTML = `<div class="msg">この画像は表示できませんでした。<br>${esc(item.name)}</div>`;
+    } else if (ok){
+      stage.appendChild(img);
+    } else {
+      stage.innerHTML = `<div class="msg">この画像は表示できませんでした。<br>${esc(item.name)}</div>`;
+    }
+    if (V.slide) V.timer = setTimeout(next, intervalMs());
+    preloadNext();
+  } else {
+    const v = document.createElement('video');
+    v.controls = true; v.playsInline = true; v.autoplay = true;
+    V.url = URL.createObjectURL(file); v.src = V.url;
+    v.onended = () => { if (V.slide) next(); };
+    v.onerror = () => {
+      if (token !== V.token) return;
+      stage.innerHTML = `<div class="msg">この動画はこのブラウザでは再生できない形式の可能性があります。<br>${esc(item.name)}<br><small>（Macの場合、Safari・Chromeで再生できない形式は QuickTime Player で開いてください）</small></div>`;
+      if (V.slide) V.timer = setTimeout(next, intervalMs());
+    };
+    stage.appendChild(v);
+    v.play().catch(() => {});   // 自動再生が止められた場合は再生ボタンで再生
+  }
+}
+let preloadImg = null;
+async function preloadNext(){
+  const n = V.items[(V.index + 1) % V.items.length];
+  if (!n || n.kind !== 'image' || HEIC_EXT.has(extOf(n.name))) return;
+  try {
+    const f = await getFile(n);
+    if (preloadImg?._url) URL.revokeObjectURL(preloadImg._url);
+    preloadImg = new Image(); preloadImg._url = URL.createObjectURL(f); preloadImg.src = preloadImg._url;
+    preloadImg.decode().catch(() => {});
+  } catch (e) {}
+}
+const intervalMs = () => (+$('#vInterval').value || 5) * 1000;
+function next(){ V.index = (V.index + 1) % V.items.length; show(); }
+function prev(){ V.index = (V.index - 1 + V.items.length) % V.items.length; show(); }
+function setSlide(on){
+  V.slide = on;
+  $('#vSlide').classList.toggle('on', on);
+  $('#vSlide').textContent = on ? '❚❚ 停止' : '▶ スライド';
+  clearTimeout(V.timer);
+  if (on && V.open && V.items[V.index]?.kind === 'image' && stage.querySelector('img')) V.timer = setTimeout(next, intervalMs());
+}
+$('#vInterval').value = localStorage.getItem('slideInterval') || '5';
+$('#vInterval').onchange = e => { localStorage.setItem('slideInterval', e.target.value); if (V.slide) setSlide(true); };
+$('#vNext').onclick = e => { e.stopPropagation(); next(); };
+$('#vPrev').onclick = e => { e.stopPropagation(); prev(); };
+$('#vClose').onclick = () => history.back();
+$('#vSlide').onclick = () => setSlide(!V.slide);
+$('#vFull').onclick = toggleFull;
+function toggleFull(){
+  if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  else viewer.requestFullscreen?.().catch(() => {});
+}
+document.addEventListener('keydown', e => {
+  if (!V.open) return;
+  if (e.target.tagName === 'SELECT') return;
+  const vid = stage.querySelector('video');
+  if (e.key === 'ArrowRight'){ next(); e.preventDefault(); }
+  else if (e.key === 'ArrowLeft'){ prev(); e.preventDefault(); }
+  else if (e.key === 'Escape'){ if (!document.fullscreenElement) history.back(); }
+  else if (e.key === 'f' || e.key === 'F'){ toggleFull(); }
+  else if (e.key === ' '){
+    e.preventDefault();
+    if (vid){ vid.paused ? vid.play() : vid.pause(); } else setSlide(!V.slide);
+  }
+  poke();
+});
+/* マウスを止めると操作ボタンを隠す */
+let idleT = null;
+function poke(){ viewer.classList.remove('idle'); clearTimeout(idleT); idleT = setTimeout(() => viewer.classList.add('idle'), 2500); }
+viewer.addEventListener('mousemove', poke);
+/* スワイプで前後へ */
+let sx = null, sy = null;
+stage.addEventListener('pointerdown', e => { if (e.pointerType !== 'mouse'){ sx = e.clientX; sy = e.clientY; } });
+stage.addEventListener('pointerup', e => {
+  if (sx === null) return;
+  const dx = e.clientX - sx, dy = e.clientY - sy; sx = null;
+  if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5) (dx < 0 ? next : prev)();
+  else poke();
+});
+
+/* ============ ブラウザの「戻る」に対応 ============ */
+window.addEventListener('popstate', e => {
+  const st = e.state;
+  if (V.open && !(st && st.viewer)){ closeViewerUI(); if (st && typeof st.depth === 'number' && st.depth === trail.length - 1) return; }
+  if (!st || typeof st.depth !== 'number' || !lib){ lib = null; renderHome(); return; }
+  if (st.viewer) { history.back(); return; }     // 閉じたビューアの履歴に戻った場合はさらに戻る
+  if (st.depth < trail.length - 1){
+    if (current) scrollPos.set(current.path, window.scrollY);
+    trail = trail.slice(0, st.depth + 1);
+    renderFolder();
+  } else if (st.depth > trail.length - 1){
+    history.back();   // 進むで消えた階層へは行けないので戻す
+  }
+});
+
+history.replaceState(null, '');
+renderHome();
+if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
+</script>
+</body>
+</html>
