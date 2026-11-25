@@ -724,19 +724,25 @@ def main():
     ap.add_argument('--root', required=True, help='アルバムとして見せるフォルダ（外付けHDDなど）')
     ap.add_argument('--app', required=True, help='アプリ（index.html など）のフォルダ')
     ap.add_argument('--port', type=int, default=8787)
-    ap.add_argument('--host', default='127.0.0.1')
+    ap.add_argument('--host', default='127.0.0.1', help='待ち受けるアドレス。カンマ区切りで複数可')
     ap.add_argument('--cache', default=os.path.expanduser('~/Library/Caches/AlbumServer'))
     ap.add_argument('--users', default='', help='家族ごとのログイン設定（users.json）。指定するとログインが必要になる')
     a = ap.parse_args()
-    srv = ThreadingHTTPServer((a.host, a.port), Handler)
-    srv.daemon_threads = True
-    srv.root = os.path.abspath(a.root)
-    srv.app = os.path.abspath(a.app)
-    srv.cache = a.cache
-    srv.auth = Auth(a.users) if a.users else None
-    os.makedirs(srv.cache, exist_ok=True)
-    print(f'AlbumServer: http://{a.host}:{a.port}/  root={srv.root}', flush=True)
-    srv.serve_forever()
+    auth = Auth(a.users) if a.users else None
+    os.makedirs(a.cache, exist_ok=True)
+    servers = []
+    for host in [h.strip() for h in a.host.split(',') if h.strip()]:   # 例：--host 127.0.0.1,100.x.x.x
+        srv = ThreadingHTTPServer((host, a.port), Handler)
+        srv.daemon_threads = True
+        srv.root = os.path.abspath(a.root)
+        srv.app = os.path.abspath(a.app)
+        srv.cache = a.cache
+        srv.auth = auth
+        servers.append(srv)
+        print(f'AlbumServer: http://{host}:{a.port}/  root={srv.root}', flush=True)
+    for srv in servers[1:]:
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+    servers[0].serve_forever()
 
 if __name__ == '__main__':
     main()
