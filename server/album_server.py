@@ -3,13 +3,14 @@
 
 外付けHDDなどのフォルダを、iPhone などのブラウザからアルバム形式で見るためのもの。
 - 127.0.0.1 だけで待ち受ける（外からは Tailscale の serve 経由でのみ届く想定）
-- 読み取り専用：ファイルの作成・変更・削除は一切しない
+- 写真・動画の追加（アップロード）と、新しいフォルダの作成ができる。変更・削除・上書きは一切しない
+  （同じ名前があれば「名前 (2).jpg」のように別名で保存する）
 - サムネイルは macOS 標準の sips / qlmanage で作り、キャッシュフォルダに保存する
 
 使い方:
   python3 album_server.py --root "/Volumes/Family_ハードディスク" --app ./app --port 8787
 """
-import argparse, hashlib, hmac, json, mimetypes, os, re, secrets, shutil, subprocess, sys, tempfile, threading, time, urllib.parse
+import argparse, hashlib, hmac, json, mimetypes, os, re, secrets, shutil, subprocess, sys, tempfile, threading, time, unicodedata, urllib.parse
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 
 IMG_EXT = {'jpg', 'jpeg', 'jpe', 'png', 'gif', 'webp', 'bmp', 'avif', 'heic', 'heif'}
@@ -23,6 +24,17 @@ PW_ITER = 300000
 SESSION_DAYS = 180
 LOCK_FAILS, LOCK_SECONDS = 5, 15 * 60
 COOKIE = 'albsess'
+FREE_MARGIN = 1024 ** 3          # 追加後もHDDに最低1GBは空きを残す
+MAX_UPLOAD = 64 * 1024 ** 3      # 1ファイルの上限（64GB）
+NAME_LOCK = threading.Lock()     # 保存名の決定と確定を同時に行わないための鍵
+
+def clean_name(n):
+    """保存するファイル名・フォルダ名を安全な形にする。使えない名前なら空文字"""
+    n = unicodedata.normalize('NFC', str(n)).strip()
+    n = re.sub(r'[\x00-\x1f/\\:]', '_', n)
+    if not n or n.startswith('.') or len(n.encode('utf-8')) > 240:
+        return ''
+    return n
 
 def pw_hash(pw, salt=None, it=PW_ITER):
     salt = salt or secrets.token_hex(16)
@@ -214,10 +226,29 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError:
             return {}
 
+    def same_origin(self):
+        """ほかのサイトからの書き込み要求を断る"""
+        o = self.headers.get('Origin')
+        if not o:
+            return True
+        return urllib.parse.urlsplit(o).netloc == (self.headers.get('Host') or '')
+
     def do_POST(self):
         a = self.server.auth
-        path = urllib.parse.urlsplit(self.path).path
+        u = urllib.parse.urlsplit(self.path)
+        path = u.path
+        if not self.same_origin():
+            self.close_connection = True
+            return self.send_json({'error': 'このページからは操作できません'}, 403)
+        try:
+            if path == '/api/upload':
+                return self.api_upload(urllib.parse.parse_qs(u.query))
+            if path == '/api/mkdir':
+                return self.api_mkdir(self.read_json())
+        except (BrokenPipeError, ConnectionResetError):
+            return
         if not a or path not in ('/api/login', '/api/setup', '/api/logout'):
+            self.close_connection = True
             return self.send_err(404, 'not found')
         body = self.read_json()
         if path == '/api/logout':
@@ -238,6 +269,88 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('Content-Type', 'application/json; charset=utf-8'); self.send_header('Content-Length', str(len(out)))
         self.send_header('Cache-Control', 'no-store'); self.end_headers()
         self.wfile.write(out)
+
+    def write_dir(self, rel):
+        """書き込んでよいフォルダの実パスを返す。だめなら (None, (status, message))"""
+        a = self.server.auth
+        if a and not self.current_user():
+            return None, (401, 'ログインしてください')
+        parts = [p for p in rel.split('/') if p]
+        if a and (not parts or not self.allowed(rel)):
+            return None, (403, 'このフォルダには追加できません')
+        if not os.path.isdir(self.server.root):
+            return None, (503, 'HDDが見つかりません（接続されているか確認してください）')
+        d = self.safe_path(rel, self.server.root)
+        if not d or not os.path.isdir(d) or (parts and parts[0] in SKIP_DIRS):
+            return None, (404, 'フォルダが見つかりません')
+        return d, None
+
+    def api_upload(self, q):
+        self.close_connection = True       # 途中で断った場合に本文が残らないよう、毎回接続を閉じる
+        d, err = self.write_dir(q.get('path', [''])[0])
+        if err:
+            return self.send_json({'error': err[1]}, err[0])
+        name = clean_name(q.get('name', [''])[0])
+        if not name or not kind_of(name):
+            return self.send_json({'error': '写真・動画のファイルだけ追加できます'}, 400)
+        try:
+            n = int(self.headers.get('Content-Length') or -1)
+        except ValueError:
+            n = -1
+        if n < 0:
+            return self.send_json({'error': 'ファイルの大きさがわかりません'}, 411)
+        if n > MAX_UPLOAD:
+            return self.send_json({'error': 'ファイルが大きすぎます'}, 413)
+        if shutil.disk_usage(d).free < n + FREE_MARGIN:
+            return self.send_json({'error': 'HDDの空き容量が足りません'}, 507)
+        tmp = os.path.join(d, '.upload-' + secrets.token_hex(8) + '.part')
+        try:
+            left = n
+            with open(tmp, 'xb') as f:
+                while left > 0:
+                    buf = self.rfile.read(min(CHUNK, left))
+                    if not buf:
+                        raise ConnectionError('途中で切れました')
+                    f.write(buf)
+                    left -= len(buf)
+                f.flush(); os.fsync(f.fileno())
+            try:
+                mt = int(q.get('mtime', ['0'])[0]) / 1000
+            except ValueError:
+                mt = 0
+            if 0 < mt < time.time() + 86400:
+                os.utime(tmp, (mt, mt))
+            stem, ext = os.path.splitext(name)
+            with NAME_LOCK:
+                final, i = name, 2
+                while os.path.lexists(os.path.join(d, final)):
+                    final = f'{stem} ({i}){ext}'; i += 1
+                os.rename(tmp, os.path.join(d, final))
+        except Exception as e:
+            try: os.remove(tmp)
+            except OSError: pass
+            if isinstance(e, (BrokenPipeError, ConnectionResetError)):
+                raise
+            return self.send_json({'error': '保存できませんでした（' + type(e).__name__ + '）'}, 500)
+        st = os.stat(os.path.join(d, final))
+        self.send_json({'ok': True, 'name': final, 'size': st.st_size, 'mtime': int(st.st_mtime * 1000)})
+
+    def api_mkdir(self, body):
+        d, err = self.write_dir(str(body.get('path', '')))
+        if err:
+            return self.send_json({'error': err[1]}, err[0])
+        name = clean_name(body.get('name', ''))
+        if not name or name in SKIP_DIRS:
+            return self.send_json({'error': 'この名前は使えません'}, 400)
+        with NAME_LOCK:
+            full = os.path.join(d, name)
+            if os.path.lexists(full):
+                return self.send_json({'error': '同じ名前のフォルダ（またはファイル）がすでにあります'}, 409)
+            try:
+                os.mkdir(full)
+            except OSError as e:
+                return self.send_json({'error': '作れませんでした（' + type(e).__name__ + '）'}, 500)
+        self.send_json({'ok': True, 'name': name})
 
     def safe_path(self, rel, base):
         """base の中にあるパスだけを許可する（.. や隠しファイル、シンボリックリンクでの抜け出しを防ぐ）"""
@@ -277,7 +390,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not self.allowed(rel) or not [p for p in rel.split('/') if p][1:]:
                     return self.send_err(401, 'login required')
                 if path.startswith('/media/'):
-                    return self.send_file(self.safe_path(rel, self.server.root), head, media=True)
+                    return self.send_file(self.safe_path(rel, self.server.root), head, media=True, dl='dl' in q)
                 return self.send_thumb(self.safe_path(rel, self.server.root), head)
             rel = path.lstrip('/') or 'index.html'
             if rel.endswith('/'):
@@ -314,7 +427,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json({'dirs': dirs, 'files': files})
 
     # ---- ファイル送信（動画の途中再生に必要な Range 要求に対応） ----
-    def send_file(self, full, head, media):
+    def send_file(self, full, head, media, dl=False):
         if not full or not os.path.isfile(full) or (media and not kind_of(os.path.basename(full))):
             return self.send_err(404, 'not found')
         size = os.path.getsize(full)
@@ -341,6 +454,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('Content-Length', str(length))
         if status == 206:
             self.send_header('Content-Range', f'bytes {start}-{end}/{size}')
+        if dl:
+            self.send_header('Content-Disposition', "attachment; filename*=UTF-8''" + urllib.parse.quote(os.path.basename(full)))
         self.send_header('Cache-Control', 'private, max-age=3600' if media else 'no-cache')
         self.end_headers()
         if head:
