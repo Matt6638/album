@@ -132,6 +132,7 @@ dialog#pwDlg::backdrop{background:rgba(0,0,0,.6)}
   <button id="homeBtn" class="iconbtn" title="フォルダ一覧へ" aria-label="フォルダ一覧へ">⌂</button>
   <nav id="crumbs"></nav>
   <select id="sortSel" class="btn hide-sm" title="アルバムの並び順" hidden>
+    <option value="auto">自動</option>
     <option value="desc">新しい順</option>
     <option value="asc">古い順</option>
   </select>
@@ -320,8 +321,13 @@ async function listDir(node){
 const getFile = item => lib.type === 'fs' ? item.ref.getFile()
   : lib.type === 'http' ? fetch(mediaUrl(item)).then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.blob(); }).then(b => new File([b], item.name, {lastModified: item.mtime}))
   : Promise.resolve(item.ref);
-const sortOrder = () => localStorage.getItem('albumSort') || 'desc';
-const sortDirs = dirs => [...dirs].sort((a, b) => sortOrder() === 'asc' ? collator.compare(a.name, b.name) : collator.compare(b.name, a.name));
+const sortOrder = () => localStorage.getItem('albumSort') || 'auto';
+/* 自動：日付名のフォルダ（260515_… など）が多ければ新しい順、それ以外（00_family, 01_淳宏 …）は名前順 */
+function sortDirs(dirs){
+  let o = sortOrder();
+  if (o === 'auto') o = dirs.filter(d => parseName(d.name).iso).length * 2 >= dirs.length && dirs.length ? 'desc' : 'asc';
+  return [...dirs].sort((a, b) => o === 'asc' ? collator.compare(a.name, b.name) : collator.compare(b.name, a.name));
+}
 const sortMedia = media => [...media].sort((a, b) => collator.compare(a.name, b.name));
 
 function folderMeta(node, depth = 0){
