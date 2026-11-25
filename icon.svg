@@ -1,8 +1,43 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="112" fill="#1b2a4a"/>
-  <rect x="132" y="104" width="280" height="230" rx="26" fill="#3d6fe0" opacity=".55" transform="rotate(8 272 219)"/>
-  <rect x="100" y="150" width="300" height="250" rx="28" fill="#f4f5f7"/>
-  <rect x="124" y="174" width="252" height="176" rx="14" fill="#9ec3ff"/>
-  <circle cx="318" cy="216" r="24" fill="#ffd45c"/>
-  <path d="M124 330 L206 244 L262 300 L298 266 L376 340 L376 350 L124 350 Z" fill="#2f6b4a"/>
+  <defs>
+    <clipPath id="round"><rect width="512" height="512" rx="112"/></clipPath>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#24407e"/>
+      <stop offset="1" stop-color="#14254a"/>
+    </linearGradient>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffd9a8"/>
+      <stop offset="1" stop-color="#ffefd9"/>
+    </linearGradient>
+    <clipPath id="pic"><rect x="130" y="118" width="252" height="200" rx="6"/></clipPath>
+  </defs>
+  <g clip-path="url(#round)">
+  <rect width="512" height="512" fill="url(#bg)"/>
+  <!-- 後ろの写真 -->
+  <rect x="118" y="98" width="276" height="300" rx="14" fill="#f2c14e" transform="rotate(-9 256 248)"/>
+  <rect x="118" y="98" width="276" height="300" rx="14" fill="#7fb3e6" transform="rotate(7 256 248)"/>
+  <!-- 手前の写真（ポラロイド風） -->
+  <rect x="112" y="100" width="288" height="320" rx="14" fill="#ffffff"/>
+  <g clip-path="url(#pic)">
+    <rect x="130" y="118" width="252" height="200" fill="url(#sky)"/>
+    <circle cx="330" cy="168" r="26" fill="#ff9f43"/>
+    <path d="M130 290 Q 200 236 262 270 T 382 258 L 382 318 L 130 318 Z" fill="#8fcf8a"/>
+    <!-- 家族5人 -->
+    <g fill="#24407e">
+      <circle cx="178" cy="218" r="17"/><rect x="160" y="238" width="36" height="80" rx="18"/>
+      <circle cx="334" cy="222" r="16"/><rect x="317" y="241" width="34" height="77" rx="17"/>
+    </g>
+    <g fill="#e8566c">
+      <circle cx="222" cy="244" r="13"/><rect x="208" y="259" width="28" height="59" rx="14"/>
+    </g>
+    <g fill="#2f9e8f">
+      <circle cx="262" cy="252" r="12"/><rect x="249" y="266" width="26" height="52" rx="13"/>
+    </g>
+    <g fill="#f29e2e">
+      <circle cx="296" cy="262" r="10"/><rect x="285" y="274" width="22" height="44" rx="11"/>
+    </g>
+  </g>
+  <!-- ハート -->
+  <path d="M256 392 C 236 374 214 362 214 346 C 214 334 224 326 234 326 C 244 326 251 332 256 340 C 261 332 268 326 278 326 C 288 326 298 334 298 346 C 298 362 276 374 256 392 Z" fill="#e8566c"/>
+  </g>
 </svg>
