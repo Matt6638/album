@@ -927,6 +927,7 @@ function askPass({title, note = '', confirm = false, msg = ''}){
 }
 async function exportLocked(){
   if (!STAYS) return;
+  if (!(window.crypto && crypto.subtle)) { alert('このアドレス（http）ではパスコード付きの保存ができません。https のアドレス（matt6638.github.io/album）で行ってください'); return; }
   const p = await askPass({title: 'パスコードを設定', confirm: true,
     note: 'このパスコードがないとファイルを開けなくなります。忘れると戻せないので、パスワードアプリなどに控えてください。'});
   if (!p) return;
@@ -953,6 +954,7 @@ $('#stayInput').addEventListener('change', async e => {
   try {
     let obj = JSON.parse(await f.text());
     if (obj && obj.format === 'photo-album-stays-locked'){
+      if (!(window.crypto && crypto.subtle)) throw new Error('このアドレス（http）ではパスコード付きファイルを開けません。https のアドレスで開くか、パスコードなしのファイルを読み込んでください');
       let msg = '';
       for (;;){
         const p = await askPass({title: '宿泊データのパスコード', note: 'このファイルはパスコードで保護されています。', msg});
