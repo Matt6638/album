@@ -9,7 +9,7 @@
 使い方:
   python3 album_server.py --root "/Volumes/Family_ハードディスク" --app ./app --port 8787
 """
-import argparse, hashlib, json, mimetypes, os, re, shutil, subprocess, sys, tempfile, threading, urllib.parse
+import argparse, hashlib, hmac, json, mimetypes, os, re, secrets, shutil, subprocess, sys, tempfile, threading, time, urllib.parse
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 
 IMG_EXT = {'jpg', 'jpeg', 'jpe', 'png', 'gif', 'webp', 'bmp', 'avif', 'heic', 'heif'}
@@ -19,6 +19,118 @@ EXTRA_TYPES = {'.heic': 'image/heic', '.heif': 'image/heif', '.mov': 'video/quic
                '.mp4': 'video/mp4', '.webmanifest': 'application/manifest+json', '.js': 'text/javascript',
                '.svg': 'image/svg+xml', '.mkv': 'video/x-matroska', '.3gp': 'video/3gpp'}
 CHUNK = 256 * 1024
+PW_ITER = 300000
+SESSION_DAYS = 180
+LOCK_FAILS, LOCK_SECONDS = 5, 15 * 60
+COOKIE = 'albsess'
+
+def pw_hash(pw, salt=None, it=PW_ITER):
+    salt = salt or secrets.token_hex(16)
+    h = hashlib.pbkdf2_hmac('sha256', pw.encode('utf-8'), bytes.fromhex(salt), it).hex()
+    return {'salt': salt, 'hash': h, 'iter': it}
+
+def pw_check(pw, rec):
+    if not rec:
+        return False
+    h = hashlib.pbkdf2_hmac('sha256', pw.encode('utf-8'), bytes.fromhex(rec['salt']), rec['iter']).hex()
+    return hmac.compare_digest(h, rec['hash'])
+
+class Auth:
+    """家族ごとのログイン。users.json（人ごとの見られるフォルダ・パスワードのハッシュ・招待コードのハッシュ）を使う"""
+    def __init__(self, path):
+        self.path = path
+        self.sess_path = os.path.join(os.path.dirname(path), 'sessions.json')
+        self.lock = threading.Lock()
+        self.fails = {}   # user -> [回数, 最初の失敗時刻]
+        self.data = json.load(open(path, encoding='utf-8'))
+        try:
+            self.sessions = json.load(open(self.sess_path, encoding='utf-8'))
+        except (OSError, ValueError):
+            self.sessions = {}
+
+    def _save(self):
+        for path, obj in ((self.path, self.data), (self.sess_path, self.sessions)):
+            tmp = path + '.tmp'
+            with open(tmp, 'w', encoding='utf-8') as f:
+                json.dump(obj, f, ensure_ascii=False, indent=1)
+            os.chmod(tmp, 0o600)
+            os.replace(tmp, path)
+
+    def users_public(self):
+        return [{'id': k, 'name': u['display'], 'ready': bool(u.get('pw'))} for k, u in self.data['users'].items()]
+
+    def user_of(self, token):
+        if not token:
+            return None
+        th = hashlib.sha256(token.encode()).hexdigest()
+        with self.lock:
+            s = self.sessions.get(th)
+            if not s or s['exp'] < time.time() or s['user'] not in self.data['users']:
+                return None
+            return s['user']
+
+    def folders(self, uid):
+        return list(self.data['users'][uid].get('folders', []))
+
+    def _locked(self, uid):
+        f = self.fails.get(uid)
+        return bool(f and f[0] >= LOCK_FAILS and time.time() - f[1] < LOCK_SECONDS)
+
+    def _fail(self, uid):
+        f = self.fails.get(uid)
+        if not f or time.time() - f[1] >= LOCK_SECONDS:
+            f = [0, time.time()]
+        f[0] += 1
+        self.fails[uid] = f
+
+    def _new_session(self, uid):
+        token = secrets.token_urlsafe(32)
+        now = time.time()
+        self.sessions = {k: v for k, v in self.sessions.items() if v['exp'] > now}
+        self.sessions[hashlib.sha256(token.encode()).hexdigest()] = {'user': uid, 'exp': now + SESSION_DAYS * 86400}
+        self._save()
+        return token
+
+    def login(self, uid, pw):
+        with self.lock:
+            u = self.data['users'].get(uid)
+            if not u:
+                return None, '名前が見つかりません'
+            if self._locked(uid):
+                return None, '続けて間違えたため、15分ほど待ってからやり直してください'
+            if not u.get('pw'):
+                return None, 'まだパスワードが設定されていません（「はじめて使う」から設定してください）'
+            if not pw_check(pw, u['pw']):
+                self._fail(uid)
+                return None, 'パスワードが違います'
+            self.fails.pop(uid, None)
+            return self._new_session(uid), ''
+
+    def setup(self, uid, invite, pw):
+        with self.lock:
+            u = self.data['users'].get(uid)
+            if not u:
+                return None, '名前が見つかりません'
+            if u.get('pw'):
+                return None, 'この名前はパスワード設定済みです。ログインしてください'
+            if self._locked(uid):
+                return None, '続けて間違えたため、15分ほど待ってからやり直してください'
+            if len(pw) < 8:
+                return None, 'パスワードは8文字以上にしてください'
+            code = re.sub(r'[\s-]', '', invite or '').upper()
+            if not pw_check(code, u.get('invite')):
+                self._fail(uid)
+                return None, '招待コードが違います'
+            u['pw'] = pw_hash(pw)
+            u.pop('invite', None)
+            self.fails.pop(uid, None)
+            return self._new_session(uid), ''
+
+    def logout(self, token):
+        with self.lock:
+            if token:
+                self.sessions.pop(hashlib.sha256(token.encode()).hexdigest(), None)
+                self._save()
 THUMB = 480
 thumb_sem = threading.Semaphore(3)
 
@@ -61,6 +173,72 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def token(self):
+        for part in (self.headers.get('Cookie') or '').split(';'):
+            k, _, v = part.strip().partition('=')
+            if k == COOKIE:
+                return v
+        return ''
+
+    def current_user(self):
+        a = self.server.auth
+        return a.user_of(self.token()) if a else None
+
+    def allowed(self, rel):
+        """ログイン中の人がこのパスを見てよいか（先頭のフォルダで判定）。ログイン機能なしなら常に許可"""
+        a = self.server.auth
+        if not a:
+            return True
+        uid = self.current_user()
+        if not uid:
+            return False
+        top = [p for p in rel.split('/') if p][:1]
+        return (not top) or top[0] in a.folders(uid)
+
+    def secure_cookie(self):
+        host = (self.headers.get('Host') or '').split(':')[0]
+        return host.endswith('.ts.net') or self.headers.get('X-Forwarded-Proto') == 'https'
+
+    def set_cookie(self, token, max_age):
+        c = f'{COOKIE}={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={max_age}'
+        if self.secure_cookie():
+            c += '; Secure'
+        self.send_header('Set-Cookie', c)
+
+    def read_json(self):
+        n = int(self.headers.get('Content-Length') or 0)
+        if n <= 0 or n > 10000:
+            return {}
+        try:
+            return json.loads(self.rfile.read(n).decode('utf-8'))
+        except ValueError:
+            return {}
+
+    def do_POST(self):
+        a = self.server.auth
+        path = urllib.parse.urlsplit(self.path).path
+        if not a or path not in ('/api/login', '/api/setup', '/api/logout'):
+            return self.send_err(404, 'not found')
+        body = self.read_json()
+        if path == '/api/logout':
+            a.logout(self.token())
+            body = b'{"ok": true}'
+            self.send_response(200); self.set_cookie('', 0)
+            self.send_header('Content-Type', 'application/json'); self.send_header('Content-Length', str(len(body))); self.end_headers()
+            self.wfile.write(body); return
+        uid = str(body.get('user', ''))
+        if path == '/api/login':
+            token, err = a.login(uid, str(body.get('password', '')))
+        else:
+            token, err = a.setup(uid, str(body.get('invite', '')), str(body.get('password', '')))
+        if not token:
+            return self.send_json({'error': err}, 403)
+        out = json.dumps({'ok': True, 'me': {'id': uid, 'name': a.data['users'][uid]['display']}}, ensure_ascii=False).encode('utf-8')
+        self.send_response(200); self.set_cookie(token, 180 * 86400)
+        self.send_header('Content-Type', 'application/json; charset=utf-8'); self.send_header('Content-Length', str(len(out)))
+        self.send_header('Cache-Control', 'no-store'); self.end_headers()
+        self.wfile.write(out)
+
     def safe_path(self, rel, base):
         """base の中にあるパスだけを許可する（.. や隠しファイル、シンボリックリンクでの抜け出しを防ぐ）"""
         parts = [p for p in rel.split('/') if p not in ('', '.')]
@@ -82,14 +260,25 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if path == '/api/info':
                 root = self.server.root
-                return self.send_json({'app': 'photo-album-server', 'version': 1, 'name': os.path.basename(root.rstrip('/')),
-                                       'available': os.path.isdir(root)})
+                info = {'app': 'photo-album-server', 'version': 2, 'name': os.path.basename(root.rstrip('/')),
+                        'available': os.path.isdir(root), 'auth': bool(self.server.auth)}
+                if self.server.auth:
+                    uid = self.current_user()
+                    info['users'] = self.server.auth.users_public()
+                    info['me'] = {'id': uid, 'name': self.server.auth.data['users'][uid]['display']} if uid else None
+                return self.send_json(info)
             if path == '/api/list':
-                return self.api_list(q.get('path', [''])[0])
-            if path.startswith('/media/'):
-                return self.send_file(self.safe_path(path[len('/media/'):], self.server.root), head, media=True)
-            if path.startswith('/thumb/'):
-                return self.send_thumb(self.safe_path(path[len('/thumb/'):], self.server.root), head)
+                rel = q.get('path', [''])[0]
+                if not self.allowed(rel):
+                    return self.send_json({'error': 'ログインしてください'}, 401)
+                return self.api_list(rel)
+            if path.startswith('/media/') or path.startswith('/thumb/'):
+                rel = path.split('/', 2)[2]
+                if not self.allowed(rel) or not [p for p in rel.split('/') if p][1:]:
+                    return self.send_err(401, 'login required')
+                if path.startswith('/media/'):
+                    return self.send_file(self.safe_path(rel, self.server.root), head, media=True)
+                return self.send_thumb(self.safe_path(rel, self.server.root), head)
             rel = path.lstrip('/') or 'index.html'
             if rel.endswith('/'):
                 rel += 'index.html'
@@ -113,9 +302,9 @@ class Handler(BaseHTTPRequestHandler):
                         continue
                     try:
                         if e.is_dir(follow_symlinks=False):
-                            if e.name not in SKIP_DIRS:
+                            if e.name not in SKIP_DIRS and (rel.strip('/') or self.allowed(e.name)):
                                 dirs.append(e.name)
-                        elif e.is_file(follow_symlinks=False) and kind_of(e.name):
+                        elif e.is_file(follow_symlinks=False) and kind_of(e.name) and (rel.strip('/') or not self.server.auth):
                             st = e.stat()
                             files.append({'name': e.name, 'size': st.st_size, 'mtime': int(st.st_mtime * 1000)})
                     except OSError:
@@ -229,12 +418,14 @@ def main():
     ap.add_argument('--port', type=int, default=8787)
     ap.add_argument('--host', default='127.0.0.1')
     ap.add_argument('--cache', default=os.path.expanduser('~/Library/Caches/AlbumServer'))
+    ap.add_argument('--users', default='', help='家族ごとのログイン設定（users.json）。指定するとログインが必要になる')
     a = ap.parse_args()
     srv = ThreadingHTTPServer((a.host, a.port), Handler)
     srv.daemon_threads = True
     srv.root = os.path.abspath(a.root)
     srv.app = os.path.abspath(a.app)
     srv.cache = a.cache
+    srv.auth = Auth(a.users) if a.users else None
     os.makedirs(srv.cache, exist_ok=True)
     print(f'AlbumServer: http://{a.host}:{a.port}/  root={srv.root}', flush=True)
     srv.serve_forever()

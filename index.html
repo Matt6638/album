@@ -119,6 +119,17 @@ dialog#pwDlg::backdrop{background:rgba(0,0,0,.6)}
 #pwDlg input{width:100%;padding:10px 12px;margin:4px 0 10px;border-radius:8px;border:1px solid var(--line);background:#0f1012;color:var(--text);font-size:16px}
 #pwDlg .row{display:flex;gap:8px;justify-content:flex-end;margin-top:6px}
 #pwMsg{color:#ff8a80;font-size:13px;min-height:1.2em}
+/* ログイン */
+.whos{display:flex;flex-wrap:wrap;gap:10px;margin:6px 0 18px}
+.whos .who{font-size:17px;padding:12px 20px;border-radius:12px}
+.authf{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px;max-width:420px}
+.authf h3{margin:0 0 8px;font-size:17px}
+.authf p{color:var(--sub);font-size:13px;line-height:1.7;margin:0 0 10px}
+.authf label{display:block;font-size:13px;color:var(--sub);margin:10px 0 0}
+.authf input{display:block;width:100%;margin-top:4px;padding:11px 12px;border-radius:9px;border:1px solid var(--line);background:#0f1012;color:var(--text);font-size:16px}
+.authf .btn{margin-top:14px;font-size:16px;padding:10px 18px}
+.amsg{color:#ff8a80;font-size:13.5px;min-height:1.2em;margin-top:8px}
+.vh{position:absolute!important;width:1px!important;height:1px!important;opacity:0;pointer-events:none;left:-9999px}
 @media (max-width:640px){
   .albums{grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:16px 12px}
   .grid{grid-template-columns:repeat(auto-fill,minmax(100px,1fr));gap:2px}
@@ -305,6 +316,7 @@ async function listDir(node){
     } else if (lib.type === 'http'){
       const r = await fetch('api/list?path=' + encodeURIComponent(node.ref), {cache: 'no-store'});
       let j = {}; try { j = await r.json(); } catch (e) {}
+      if (r.status === 401){ setTimeout(async () => { await detectServer(); history.go(-(trail.length)); }, 0); throw new Error('ログインが必要です'); }
       if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
       const sub = name => node.ref ? node.ref + '/' + name : name;
       for (const name of j.dirs) dirs.push({name, path: node.path + '/' + name, ref: sub(name)});
@@ -489,30 +501,12 @@ let current = null;        // 表示中のフォルダノード
 let trail = [];            // ルートから現在までのノード列
 
 function setHeaderForHome(){
-  crumbs.innerHTML = '<span class="cur">フォトアルバム</span>';
+  crumbs.innerHTML = `<span class="cur">${SERVER ? '家族アルバム' : 'フォトアルバム'}</span>`;
   $('#sortSel').hidden = true; $('#slideAllBtn').hidden = true;
 }
 
-async function renderHome(){
-  current = null; trail = [];
-  setHeaderForHome();
-  document.title = 'フォトアルバム';
-  let libs = [];
-  if (HAS_FSA) libs = (await db.all('libs').catch(() => [])).sort((a, b) => a.added - b.added);
-  main.innerHTML = `
-  <div class="home">
-    <h1>フォトアルバム</h1>
-    <p class="lead">外付けハードディスクなどのフォルダを選ぶと、その中のフォルダをアルバムとして表示します。写真・動画はこのパソコンの中で読み込むだけで、インターネットへ送信されることはありません。</p>
-    ${SERVER ? `<div class="libs"><div class="lib">
-        <div class="nm">${esc(SERVER.name)}<small>${SERVER.available ? 'このMacにつながっている外付けHDD' : 'HDDが見つかりません。Macに接続されているか確認してください'}</small></div>
-        <button class="btn primary" id="srvOpen" ${SERVER.available ? '' : 'disabled'}>開く</button></div></div>` : ''}
-    <button class="btn ${SERVER ? '' : 'primary'}" id="addBtn">＋ フォルダを選ぶ</button>
-    ${HAS_FSA ? `<div class="libs">${libs.map(l => `
-      <div class="lib" data-id="${esc(l.id)}">
-        <div class="nm">${esc(l.name)}<small>登録日 ${esc(fmtDate(l.added))}</small></div>
-        <button class="btn primary" data-act="open">開く</button>
-        <button class="btn danger" data-act="remove" title="一覧から外す（ディスク上のファイルは消えません）">外す</button>
-      </div>`).join('')}</div>` : ''}
+function stayBoxHtml(){
+  return `
     <div class="staybox">
       <div class="nm"><b>宿泊データ</b>${STAYS
         ? `　${STAYS.stays.length}件（${esc(STAYS.stays[0] ? STAYS.minDate : '')}〜${esc(STAYS.maxDate || '')}）<small>読み込み日 ${esc(fmtDate(STAYS.importedAt))}・このブラウザの中だけに保存</small>`
@@ -520,7 +514,114 @@ async function renderHome(){
       <button class="btn primary" id="homeMap">🗾 宿泊マップ</button>
       <button class="btn" id="stayLoad">${STAYS ? '読み込み直す' : '宿泊データを読み込む'}</button>
       ${STAYS ? '<button class="btn" id="stayLock" title="パスコードで暗号化したファイルを保存します">🔒 パスコード付きで保存</button><button class="btn danger" id="stayDel">削除</button>' : ''}
-    </div>
+    </div>`;
+}
+function bindStayBox(){
+  $('#homeMap').onclick = openMap;
+  $('#stayLoad').onclick = () => { $('#stayInput').value = ''; $('#stayInput').click(); };
+  if ($('#stayLock')) $('#stayLock').onclick = () => exportLocked().catch(e => alert('保存できませんでした：' + e.message));
+  if ($('#stayDel')) $('#stayDel').onclick = async () => {
+    if (!confirm('このブラウザに保存した宿泊データを削除します（元のファイルは消えません）。よろしいですか？')) return;
+    await db.del('kv', 'stays'); STAYS = null; renderHome();
+  };
+}
+
+/* ===== サーバー（Macの外付けHDD）用のホーム：家族ごとのログイン ===== */
+async function api(path, body){
+  const r = await fetch(path, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body || {}), credentials: 'same-origin'});
+  let j = {}; try { j = await r.json(); } catch (e) {}
+  if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+  return j;
+}
+function renderServerHome(){
+  const S = SERVER;
+  const needLogin = S.auth && !S.me;
+  main.innerHTML = `
+  <div class="home">
+    <h1>家族アルバム</h1>
+    ${needLogin ? `
+      <p class="lead">自分の名前を選んでください。</p>
+      <div class="whos">${S.users.map(u => `<button class="btn who" data-id="${esc(u.id)}">${esc(u.name)}</button>`).join('')}</div>
+      <div id="authBox"></div>` : `
+      <div class="libs"><div class="lib">
+        <div class="nm">${esc(S.name)}<small>${S.available ? (S.me ? `${esc(S.me.name)}さんとしてログイン中` : 'このMacにつながっている外付けHDD') : 'HDDが見つかりません。Macに接続されているか確認してください'}</small></div>
+        <button class="btn primary" id="srvOpen" ${S.available ? '' : 'disabled'}>開く</button>
+      </div></div>
+      ${S.me ? '<button class="btn" id="logoutBtn">ログアウト</button>' : ''}
+      ${stayBoxHtml()}`}
+  </div>`;
+  if (needLogin){
+    main.querySelectorAll('.who').forEach(b => b.onclick = () => {
+      main.querySelectorAll('.who').forEach(x => x.classList.toggle('primary', x === b));
+      showAuthForm(S.users.find(u => u.id === b.dataset.id));
+    });
+    return;
+  }
+  $('#srvOpen').onclick = async () => {
+    await detectServer();
+    if (!SERVER || !SERVER.available){ toast('HDDが見つかりません'); renderHome(); return; }
+    if (SERVER.auth && !SERVER.me){ renderHome(); return; }
+    startLibrary({type: 'http', name: SERVER.name}, {name: SERVER.name, path: SERVER.name, ref: ''});
+  };
+  if ($('#logoutBtn')) $('#logoutBtn').onclick = async () => {
+    if (!confirm('ログアウトしますか？')) return;
+    try { await api('api/logout'); } catch (e) {}
+    await detectServer(); renderHome();
+  };
+  bindStayBox();
+}
+function showAuthForm(u){
+  const mode = u.ready ? 'login' : 'setup';
+  const box = $('#authBox');
+  box.innerHTML = `
+  <form class="authf" autocomplete="on">
+    <input type="text" name="username" autocomplete="username" value="${esc(u.name)}" class="vh" tabindex="-1" aria-hidden="true">
+    ${mode === 'login' ? `
+      <h3>${esc(u.name)}さん</h3>
+      <label>パスワード<input type="password" id="aPw" autocomplete="current-password" required></label>` : `
+      <h3>${esc(u.name)}さん：はじめての設定</h3>
+      <p>家族から届いた招待コードを入れて、自分のパスワードを決めてください。iPhoneでは「強力なパスワード」を選ぶと、パスワードアプリに保存されます。</p>
+      <label>招待コード<input type="text" id="aCode" autocomplete="off" autocapitalize="characters" placeholder="ABCD-EFGH" required></label>
+      <label>新しいパスワード（8文字以上）<input type="password" id="aPw" autocomplete="new-password" required minlength="8"></label>
+      <label>もう一度<input type="password" id="aPw2" autocomplete="new-password" required minlength="8"></label>`}
+    <div id="aMsg" class="amsg"></div>
+    <button class="btn primary" type="submit">${mode === 'login' ? 'ログイン' : '設定して始める'}</button>
+  </form>`;
+  box.querySelector('form').onsubmit = async e => {
+    e.preventDefault();
+    const msg = $('#aMsg'); msg.textContent = '';
+    const pw = $('#aPw').value;
+    try {
+      if (mode === 'login') await api('api/login', {user: u.id, password: pw});
+      else {
+        if (pw !== $('#aPw2').value){ msg.textContent = '2回の入力が一致しません'; return; }
+        await api('api/setup', {user: u.id, invite: $('#aCode').value, password: pw});
+      }
+      await detectServer(); renderHome();
+    } catch (err) { msg.textContent = err.message; }
+  };
+  setTimeout(() => (mode === 'login' ? $('#aPw') : $('#aCode')).focus(), 50);
+}
+
+async function renderHome(){
+  current = null; trail = [];
+  setHeaderForHome();
+  document.title = SERVER ? '家族アルバム' : 'フォトアルバム';
+  if (SERVER) return renderServerHome();
+  let libs = [];
+  if (HAS_FSA) libs = (await db.all('libs').catch(() => [])).sort((a, b) => a.added - b.added);
+  main.innerHTML = `
+  <div class="home">
+    <h1>フォトアルバム</h1>
+    <p class="lead">外付けハードディスクなどのフォルダを選ぶと、その中のフォルダをアルバムとして表示します。写真・動画はこのパソコンの中で読み込むだけで、インターネットへ送信されることはありません。</p>
+    <button class="btn primary" id="addBtn">＋ フォルダを選ぶ</button>
+    ${HAS_FSA ? `<div class="libs">${libs.map(l => `
+      <div class="lib" data-id="${esc(l.id)}">
+        <div class="nm">${esc(l.name)}<small>登録日 ${esc(fmtDate(l.added))}</small></div>
+        <button class="btn primary" data-act="open">開く</button>
+        <button class="btn danger" data-act="remove" title="一覧から外す（ディスク上のファイルは消えません）">外す</button>
+      </div>`).join('')}</div>` : ''}
+    ${stayBoxHtml()}
     <div class="note">
       ${HAS_FSA
         ? '<b>使い方</b>　「フォルダを選ぶ」で外付けHDDの中のフォルダ（例：人物フォルダ）を選ぶと、次回からはこの一覧から「開く」だけで表示できます。開くたびにブラウザが「閲覧を許可しますか」と確認します。<br>サムネイルは初回だけ作成し、このブラウザ内に保存するので、2回目以降は速く表示されます。'
@@ -530,18 +631,7 @@ async function renderHome(){
     </div>
   </div>`;
   $('#addBtn').onclick = addFolder;
-  if ($('#srvOpen')) $('#srvOpen').onclick = async () => {
-    await detectServer();
-    if (!SERVER || !SERVER.available){ toast('HDDが見つかりません'); renderHome(); return; }
-    startLibrary({type: 'http', name: SERVER.name}, {name: SERVER.name, path: SERVER.name, ref: ''});
-  };
-  $('#homeMap').onclick = openMap;
-  $('#stayLoad').onclick = () => { $('#stayInput').value = ''; $('#stayInput').click(); };
-  if ($('#stayLock')) $('#stayLock').onclick = () => exportLocked().catch(e => alert('保存できませんでした：' + e.message));
-  if ($('#stayDel')) $('#stayDel').onclick = async () => {
-    if (!confirm('このブラウザに保存した宿泊データを削除します（元のファイルは消えません）。よろしいですか？')) return;
-    await db.del('kv', 'stays'); STAYS = null; renderHome();
-  };
+  bindStayBox();
   $('#clearThumbs').onclick = async () => {
     if (!confirm('このブラウザに保存したサムネイルを削除します（写真・動画そのものは消えません）。よろしいですか？')) return;
     await db.clear('thumbs'); thumbMem.clear(); toast('サムネイルを削除しました'); showUsage();
