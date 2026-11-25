@@ -1,43 +1,13 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <defs>
-    <clipPath id="round"><rect width="512" height="512" rx="112"/></clipPath>
-    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#24407e"/>
-      <stop offset="1" stop-color="#14254a"/>
-    </linearGradient>
-    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#ffd9a8"/>
-      <stop offset="1" stop-color="#ffefd9"/>
-    </linearGradient>
-    <clipPath id="pic"><rect x="130" y="118" width="252" height="200" rx="6"/></clipPath>
-  </defs>
-  <g clip-path="url(#round)">
-  <rect width="512" height="512" fill="url(#bg)"/>
-  <!-- 後ろの写真 -->
-  <rect x="118" y="98" width="276" height="300" rx="14" fill="#f2c14e" transform="rotate(-9 256 248)"/>
-  <rect x="118" y="98" width="276" height="300" rx="14" fill="#7fb3e6" transform="rotate(7 256 248)"/>
-  <!-- 手前の写真（ポラロイド風） -->
-  <rect x="112" y="100" width="288" height="320" rx="14" fill="#ffffff"/>
-  <g clip-path="url(#pic)">
-    <rect x="130" y="118" width="252" height="200" fill="url(#sky)"/>
-    <circle cx="330" cy="168" r="26" fill="#ff9f43"/>
-    <path d="M130 290 Q 200 236 262 270 T 382 258 L 382 318 L 130 318 Z" fill="#8fcf8a"/>
-    <!-- 家族5人 -->
-    <g fill="#24407e">
-      <circle cx="178" cy="218" r="17"/><rect x="160" y="238" width="36" height="80" rx="18"/>
-      <circle cx="334" cy="222" r="16"/><rect x="317" y="241" width="34" height="77" rx="17"/>
-    </g>
-    <g fill="#e8566c">
-      <circle cx="222" cy="244" r="13"/><rect x="208" y="259" width="28" height="59" rx="14"/>
-    </g>
-    <g fill="#2f9e8f">
-      <circle cx="262" cy="252" r="12"/><rect x="249" y="266" width="26" height="52" rx="13"/>
-    </g>
-    <g fill="#f29e2e">
-      <circle cx="296" cy="262" r="10"/><rect x="285" y="274" width="22" height="44" rx="11"/>
-    </g>
-  </g>
-  <!-- ハート -->
-  <path d="M256 392 C 236 374 214 362 214 346 C 214 334 224 326 234 326 C 244 326 251 332 256 340 C 261 332 268 326 278 326 C 288 326 298 334 298 346 C 298 362 276 374 256 392 Z" fill="#e8566c"/>
-  </g>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+<defs><clipPath id="round"><rect width="1024" height="1024" rx="224"/></clipPath><linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffd3a5"/><stop offset=".5" stop-color="#fd8fa4"/><stop offset="1" stop-color="#8f7cf6"/></linearGradient>
+<linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff4e6"/><stop offset="1" stop-color="#ffd9cf"/></linearGradient>
+<clipPath id="c"><circle cx="512" cy="512" r="300"/></clipPath>
+<filter id="sh" x="-30%" y="-30%" width="160%" height="160%"><feDropShadow dx="0" dy="22" stdDeviation="26" flood-color="#5a2a6e" flood-opacity=".28"/></filter></defs><g clip-path="url(#round)">
+<rect width="1024" height="1024" fill="url(#bg)"/>
+<circle cx="512" cy="512" r="300" fill="url(#sky)" filter="url(#sh)"/>
+<g clip-path="url(#c)">
+<circle cx="600" cy="420" r="70" fill="#ff7f8e"/>
+<path d="M212 650 Q340 520 470 600 T812 560 V812 H212 Z" fill="#c38bd6"/>
+<path d="M212 720 Q380 610 540 690 T812 670 V812 H212 Z" fill="#8f6ff0"/>
+</g>
+</g></svg>
