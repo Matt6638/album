@@ -270,7 +270,18 @@ const db = (() => {
 })();
 
 /* ============ フォルダの読み取り ============ */
-let lib = null;            // {type:'fs'|'list', name, root}
+let lib = null;            // {type:'fs'|'list'|'http', name, root}
+let SERVER = null;         // このアプリをMacのアルバムサーバーから開いたときの情報
+const encPath = rel => rel.split('/').map(encodeURIComponent).join('/');
+const mediaUrl = item => 'media/' + encPath(item.ref);
+const thumbUrl = item => 'thumb/' + encPath(item.ref) + '?m=' + item.mtime;
+async function detectServer(){
+  if (/github\.io$/.test(location.hostname)) return;
+  try {
+    const r = await fetch('api/info', {cache: 'no-store'});
+    if (r.ok){ const j = await r.json(); if (j && j.app === 'photo-album-server') SERVER = j; }
+  } catch (e) {}
+}
 const listCache = new Map(); // path -> Promise<{dirs, media}>
 const metaCache = new Map(); // path -> Promise<{photos, videos, dirCount, cover}>
 const scrollPos = new Map();
@@ -289,6 +300,13 @@ async function listDir(node){
           if (k) media.push({name, path: node.path + '/' + name, kind: k, ref: h});
         }
       }
+    } else if (lib.type === 'http'){
+      const r = await fetch('api/list?path=' + encodeURIComponent(node.ref), {cache: 'no-store'});
+      let j = {}; try { j = await r.json(); } catch (e) {}
+      if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+      const sub = name => node.ref ? node.ref + '/' + name : name;
+      for (const name of j.dirs) dirs.push({name, path: node.path + '/' + name, ref: sub(name)});
+      for (const f of j.files){ const k = kindOf(f.name); if (k) media.push({name: f.name, path: node.path + '/' + f.name, kind: k, ref: sub(f.name), size: f.size, mtime: f.mtime}); }
     } else {
       for (const [name, child] of node.ref.dirs) dirs.push({name, path: node.path + '/' + name, ref: child});
       for (const f of node.ref.files) media.push({name: f.name, path: node.path + '/' + f.name, kind: kindOf(f.name), ref: f});
@@ -299,7 +317,9 @@ async function listDir(node){
   p.catch(() => listCache.delete(node.path));
   return p;
 }
-const getFile = item => lib.type === 'fs' ? item.ref.getFile() : Promise.resolve(item.ref);
+const getFile = item => lib.type === 'fs' ? item.ref.getFile()
+  : lib.type === 'http' ? fetch(mediaUrl(item)).then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.blob(); }).then(b => new File([b], item.name, {lastModified: item.mtime}))
+  : Promise.resolve(item.ref);
 const sortOrder = () => localStorage.getItem('albumSort') || 'desc';
 const sortDirs = dirs => [...dirs].sort((a, b) => sortOrder() === 'asc' ? collator.compare(a.name, b.name) : collator.compare(b.name, a.name));
 const sortMedia = media => [...media].sort((a, b) => collator.compare(a.name, b.name));
@@ -419,6 +439,7 @@ function videoThumb(file){
   });
 }
 async function getThumb(item, wanted){
+  if (lib.type === 'http') return {url: thumbUrl(item), dur: 0};   // サーバー側（Mac）で作ったサムネイルを使う
   const file = await getFile(item);
   const key = item.path + '|' + file.size + '|' + file.lastModified;
   if (thumbMem.has(key)) return thumbMem.get(key);
@@ -475,7 +496,10 @@ async function renderHome(){
   <div class="home">
     <h1>フォトアルバム</h1>
     <p class="lead">外付けハードディスクなどのフォルダを選ぶと、その中のフォルダをアルバムとして表示します。写真・動画はこのパソコンの中で読み込むだけで、インターネットへ送信されることはありません。</p>
-    <button class="btn primary" id="addBtn">＋ フォルダを選ぶ</button>
+    ${SERVER ? `<div class="libs"><div class="lib">
+        <div class="nm">${esc(SERVER.name)}<small>${SERVER.available ? 'このMacにつながっている外付けHDD' : 'HDDが見つかりません。Macに接続されているか確認してください'}</small></div>
+        <button class="btn primary" id="srvOpen" ${SERVER.available ? '' : 'disabled'}>開く</button></div></div>` : ''}
+    <button class="btn ${SERVER ? '' : 'primary'}" id="addBtn">＋ フォルダを選ぶ</button>
     ${HAS_FSA ? `<div class="libs">${libs.map(l => `
       <div class="lib" data-id="${esc(l.id)}">
         <div class="nm">${esc(l.name)}<small>登録日 ${esc(fmtDate(l.added))}</small></div>
@@ -499,6 +523,11 @@ async function renderHome(){
     </div>
   </div>`;
   $('#addBtn').onclick = addFolder;
+  if ($('#srvOpen')) $('#srvOpen').onclick = async () => {
+    await detectServer();
+    if (!SERVER || !SERVER.available){ toast('HDDが見つかりません'); renderHome(); return; }
+    startLibrary({type: 'http', name: SERVER.name}, {name: SERVER.name, path: SERVER.name, ref: ''});
+  };
   $('#homeMap').onclick = openMap;
   $('#stayLoad').onclick = () => { $('#stayInput').value = ''; $('#stayInput').click(); };
   if ($('#stayLock')) $('#stayLock').onclick = () => exportLocked().catch(e => alert('保存できませんでした：' + e.message));
@@ -510,7 +539,7 @@ async function renderHome(){
     if (!confirm('このブラウザに保存したサムネイルを削除します（写真・動画そのものは消えません）。よろしいですか？')) return;
     await db.clear('thumbs'); thumbMem.clear(); toast('サムネイルを削除しました'); showUsage();
   };
-  main.querySelectorAll('.lib').forEach(row => {
+  main.querySelectorAll('.lib[data-id]').forEach(row => {
     const rec = libs.find(l => l.id === row.dataset.id);
     row.querySelector('[data-act=open]').onclick = () => openLibrary(rec);
     row.querySelector('[data-act=remove]').onclick = async () => {
@@ -664,8 +693,11 @@ function albumCard(d){
       let t;
       try { t = await getThumb(meta.cover, wantedFn(el)); }
       catch (e) { if (e.message === 'cancelled') throw e; return; }
-      const img = new Image(); img.alt = ''; img.onload = () => img.classList.add('ok'); img.src = t.url;
-      const cv = el.querySelector('.cover'); cv.querySelector('.fold')?.remove(); cv.appendChild(img);
+      const img = new Image(); img.alt = '';
+      const cv = el.querySelector('.cover');
+      img.onload = () => { img.classList.add('ok'); cv.querySelector('.fold')?.remove(); };
+      img.onerror = () => img.remove();
+      img.src = t.url; cv.appendChild(img);
     }
   });
   return el;
@@ -678,7 +710,9 @@ function mediaTile(m, onOpen){
   observe(el, async () => {
     try {
       const t = await getThumb(m, wantedFn(el));
-      const img = new Image(); img.alt = ''; img.onload = () => img.classList.add('ok'); img.src = t.url;
+      const img = new Image(); img.alt = ''; img.onload = () => img.classList.add('ok');
+      img.onerror = () => { img.remove(); el.insertAdjacentHTML('afterbegin', `<div class="ph"><b>${m.kind === 'video' ? '▶' : '▢'}</b>${esc(m.name)}</div>`); };
+      img.src = t.url;
       el.prepend(img);
       if (m.kind === 'video' && t.dur) el.querySelector('.badge').textContent = '▶ ' + fmtDur(t.dur);
     } catch (e) {
@@ -706,7 +740,7 @@ function openViewer(items, index, slideshow){
 }
 function closeViewerUI(){
   V.open = false; setSlide(false);
-  stage.innerHTML = ''; if (V.url){ URL.revokeObjectURL(V.url); V.url = null; }
+  stage.innerHTML = ''; dropUrl();
   viewer.hidden = true;
   if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
 }
@@ -717,25 +751,26 @@ async function show(){
   $('#vName').textContent = item.name;
   $('#vMeta').textContent = `${V.index + 1} / ${V.items.length}`;
   let file;
-  try { file = await getFile(item); }
+  if (lib.type === 'http') file = {lastModified: item.mtime, size: item.size, httpUrl: mediaUrl(item)};
+  else try { file = await getFile(item); }
   catch (e) { if (token === V.token) stage.innerHTML = '<div class="msg">ファイルを読み込めませんでした。<br>外付けHDDが接続されているか確認してください。</div>'; return; }
   if (token !== V.token) return;
   $('#vMeta').textContent = `${V.index + 1} / ${V.items.length}　${fmtDate(file.lastModified)}　${fmtSize(file.size)}`;
-  if (V.url){ URL.revokeObjectURL(V.url); V.url = null; }
+  dropUrl();
   stage.innerHTML = '';
   if (item.kind === 'image'){
     let blob = file;
     const img = new Image(); img.alt = item.name; img.decoding = 'async';
     const ok = await new Promise(res => {
       img.onload = () => res(true); img.onerror = () => res(false);
-      V.url = URL.createObjectURL(blob); img.src = V.url;
+      V.url = file.httpUrl || URL.createObjectURL(blob); img.src = V.url;
     });
     if (token !== V.token) return;
     if (!ok && HEIC_EXT.has(extOf(item.name))){
       stage.innerHTML = '<div class="msg">HEIC画像を変換しています…</div>';
-      try { blob = await heicToJpeg(file); } catch (e) { blob = null; }
+      try { blob = await heicToJpeg(file.httpUrl ? await (await fetch(file.httpUrl)).blob() : file); } catch (e) { blob = null; }
       if (token !== V.token) return;
-      if (blob){ URL.revokeObjectURL(V.url); V.url = URL.createObjectURL(blob); img.src = V.url; await img.decode().catch(() => {}); stage.innerHTML = ''; stage.appendChild(img); }
+      if (blob){ dropUrl(); V.url = URL.createObjectURL(blob); img.src = V.url; await img.decode().catch(() => {}); stage.innerHTML = ''; stage.appendChild(img); }
       else stage.innerHTML = `<div class="msg">この画像は表示できませんでした。<br>${esc(item.name)}</div>`;
     } else if (ok){
       stage.appendChild(img);
@@ -747,7 +782,7 @@ async function show(){
   } else {
     const v = document.createElement('video');
     v.controls = true; v.playsInline = true; v.autoplay = true;
-    V.url = URL.createObjectURL(file); v.src = V.url;
+    V.url = file.httpUrl || URL.createObjectURL(file); v.src = V.url;
     v.onended = () => { if (V.slide) next(); };
     v.onerror = () => {
       if (token !== V.token) return;
@@ -758,10 +793,13 @@ async function show(){
     v.play().catch(() => {});   // 自動再生が止められた場合は再生ボタンで再生
   }
 }
+function dropUrl(){ if (V.url && V.url.startsWith('blob:')) URL.revokeObjectURL(V.url); V.url = null; }
 let preloadImg = null;
 async function preloadNext(){
   const n = V.items[(V.index + 1) % V.items.length];
-  if (!n || n.kind !== 'image' || HEIC_EXT.has(extOf(n.name))) return;
+  if (!n || n.kind !== 'image') return;
+  if (lib.type === 'http'){ preloadImg = new Image(); preloadImg.src = mediaUrl(n); return; }
+  if (HEIC_EXT.has(extOf(n.name))) return;
   try {
     const f = await getFile(n);
     if (preloadImg?._url) URL.revokeObjectURL(preloadImg._url);
@@ -1109,7 +1147,7 @@ window.addEventListener('popstate', e => {
 });
 
 history.replaceState(null, '');
-loadStays().finally(renderHome);
+Promise.all([loadStays(), detectServer()]).finally(renderHome);
 if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
 </script>
 </body>
