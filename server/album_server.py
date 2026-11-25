@@ -3,8 +3,9 @@
 
 外付けHDDなどのフォルダを、iPhone などのブラウザからアルバム形式で見るためのもの。
 - 127.0.0.1 だけで待ち受ける（外からは Tailscale の serve 経由でのみ届く想定）
-- 写真・動画の追加（アップロード）と、新しいフォルダの作成ができる。変更・削除・上書きは一切しない
-  （同じ名前があれば「名前 (2).jpg」のように別名で保存する）
+- 写真・動画の追加（アップロード）、フォルダの作成、移動、名前の変更ができる。上書きはしない
+  （同じ名前があれば「名前 (2).jpg」のように別名にする）
+- 削除はすぐには消さず、HDDの「.album-trash」（ゴミ箱）に移す。アプリのゴミ箱から元に戻せる
 - サムネイルは macOS 標準の sips / qlmanage で作り、キャッシュフォルダに保存する
 
 使い方:
@@ -26,7 +27,8 @@ LOCK_FAILS, LOCK_SECONDS = 5, 15 * 60
 COOKIE = 'albsess'
 FREE_MARGIN = 1024 ** 3          # 追加後もHDDに最低1GBは空きを残す
 MAX_UPLOAD = 64 * 1024 ** 3      # 1ファイルの上限（64GB）
-NAME_LOCK = threading.Lock()     # 保存名の決定と確定を同時に行わないための鍵
+NAME_LOCK = threading.Lock()
+TRASH = '.album-trash'           # ゴミ箱（HDDのいちばん上の隠しフォルダ）     # 保存名の決定と確定を同時に行わないための鍵
 
 def clean_name(n):
     """保存するファイル名・フォルダ名を安全な形にする。使えない名前なら空文字"""
@@ -219,7 +221,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def read_json(self):
         n = int(self.headers.get('Content-Length') or 0)
-        if n <= 0 or n > 10000:
+        if n <= 0 or n > 2000000:
             return {}
         try:
             return json.loads(self.rfile.read(n).decode('utf-8'))
@@ -245,6 +247,16 @@ class Handler(BaseHTTPRequestHandler):
                 return self.api_upload(urllib.parse.parse_qs(u.query))
             if path == '/api/mkdir':
                 return self.api_mkdir(self.read_json())
+            if path == '/api/trash':
+                return self.api_trash(self.read_json())
+            if path == '/api/trash/restore':
+                return self.api_trash_act(self.read_json(), restore=True)
+            if path == '/api/trash/purge':
+                return self.api_trash_act(self.read_json(), restore=False)
+            if path == '/api/move':
+                return self.api_move(self.read_json())
+            if path == '/api/rename':
+                return self.api_rename(self.read_json())
         except (BrokenPipeError, ConnectionResetError):
             return
         if not a or path not in ('/api/login', '/api/setup', '/api/logout'):
@@ -352,6 +364,179 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json({'error': '作れませんでした（' + type(e).__name__ + '）'}, 500)
         self.send_json({'ok': True, 'name': name})
 
+    # ---- 削除（ゴミ箱）・移動・名前変更 ----
+    def item_path(self, rel):
+        """変更してよい既存の写真・動画・フォルダの実パス。だめなら (None, (status, message))"""
+        a = self.server.auth
+        if a and not self.current_user():
+            return None, (401, 'ログインしてください')
+        parts = [p for p in str(rel).split('/') if p]
+        if not parts or (a and len(parts) < 2):
+            return None, (403, 'いちばん上のフォルダは変更できません')
+        if not self.allowed('/'.join(parts)):
+            return None, (403, 'このフォルダは変更できません')
+        if not os.path.isdir(self.server.root):
+            return None, (503, 'HDDが見つかりません（接続されているか確認してください）')
+        full = self.safe_path('/'.join(parts), self.server.root)
+        raw = os.path.join(self.server.root, *parts)
+        if not full or not os.path.lexists(raw) or os.path.islink(raw) or parts[0] in SKIP_DIRS:
+            return None, (404, '見つかりません')
+        if os.path.isfile(full) and not kind_of(parts[-1]):
+            return None, (403, '写真・動画以外のファイルは変更できません')
+        return full, None
+
+    def trash_dir(self):
+        return os.path.join(self.server.root, TRASH)
+
+    def free_name(self, d, name, isdir):
+        stem, ext = (name, '') if isdir else os.path.splitext(name)
+        final, i = name, 2
+        while os.path.lexists(os.path.join(d, final)):
+            final = f'{stem} ({i}){ext}'; i += 1
+        return final
+
+    def rel_of(self, full):
+        return os.path.relpath(full, os.path.realpath(self.server.root)).replace(os.sep, '/')
+
+    def api_trash(self, body):
+        items = body.get('items') or []
+        if not isinstance(items, list) or not 0 < len(items) <= 2000:
+            return self.send_json({'error': '対象がありません'}, 400)
+        done, errors = [], []
+        uid = self.current_user()
+        for rel in items:
+            full, err = self.item_path(rel)
+            if err:
+                errors.append(f'{rel}：{err[1]}'); continue
+            tid = time.strftime('%Y%m%d-%H%M%S') + '-' + secrets.token_hex(4)
+            box = os.path.join(self.trash_dir(), tid)
+            try:
+                with NAME_LOCK:
+                    os.makedirs(box)
+                    isdir = os.path.isdir(full)
+                    size = 0 if isdir else os.path.getsize(full)
+                    name = os.path.basename(full)
+                    os.rename(full, os.path.join(box, name))
+                    meta = {'orig': self.rel_of(full), 'name': name, 'kind': 'dir' if isdir else kind_of(name),
+                            'size': size, 'at': int(time.time() * 1000), 'by': uid}
+                    with open(os.path.join(self.trash_dir(), tid + '.json'), 'w', encoding='utf-8') as f:
+                        json.dump(meta, f, ensure_ascii=False)
+                done.append(rel)
+            except OSError as e:
+                errors.append(f'{rel}：ゴミ箱に移せませんでした（{type(e).__name__}）')
+        self.send_json({'ok': True, 'done': done, 'errors': errors})
+
+    def trash_items(self):
+        """見てよいゴミ箱の中身 [(id, meta)]（新しい順）"""
+        out = []
+        t = self.trash_dir()
+        if not os.path.isdir(t):
+            return out
+        for fn in os.listdir(t):
+            if not fn.endswith('.json'):
+                continue
+            tid = fn[:-5]
+            try:
+                with open(os.path.join(t, fn), encoding='utf-8') as f:
+                    m = json.load(f)
+            except (OSError, ValueError):
+                continue
+            if self.allowed(m.get('orig', '')) and os.path.lexists(os.path.join(t, tid, m.get('name', ''))):
+                out.append((tid, m))
+        out.sort(key=lambda x: -x[1].get('at', 0))
+        return out
+
+    def api_trash_list(self):
+        a = self.server.auth
+        if a and not self.current_user():
+            return self.send_json({'error': 'ログインしてください'}, 401)
+        names = {k: v['display'] for k, v in a.data['users'].items()} if a else {}
+        items = [{'id': tid, 'name': m['name'], 'orig': m['orig'], 'kind': m.get('kind'), 'size': m.get('size', 0),
+                  'at': m.get('at', 0), 'by': names.get(m.get('by'), '')} for tid, m in self.trash_items()]
+        self.send_json({'items': items})
+
+    def api_trash_act(self, body, restore):
+        a = self.server.auth
+        if a and not self.current_user():
+            return self.send_json({'error': 'ログインしてください'}, 401)
+        want = set(body.get('ids') or [])
+        done, errors = [], []
+        t = self.trash_dir()
+        for tid, m in self.trash_items():
+            if tid not in want:
+                continue
+            src = os.path.join(t, tid, m['name'])
+            try:
+                with NAME_LOCK:
+                    if restore:
+                        parts = [p for p in m['orig'].split('/') if p]
+                        parent = os.path.join(self.server.root, *parts[:-1])
+                        if not self.safe_path('/'.join(parts[:-1]), self.server.root):
+                            raise OSError('戻し先が不正です')
+                        os.makedirs(parent, exist_ok=True)
+                        final = self.free_name(parent, m['name'], os.path.isdir(src))
+                        os.rename(src, os.path.join(parent, final))
+                    else:
+                        if os.path.isdir(src) and not os.path.islink(src):
+                            shutil.rmtree(src)
+                        else:
+                            os.remove(src)
+                    os.remove(os.path.join(t, tid + '.json'))
+                    try: os.rmdir(os.path.join(t, tid))
+                    except OSError: pass
+                done.append(tid)
+            except OSError as e:
+                errors.append(f'{m["name"]}：{e}')
+        self.send_json({'ok': True, 'done': done, 'errors': errors})
+
+    def api_move(self, body):
+        dest, err = self.write_dir(str(body.get('dest', '')))
+        if err:
+            return self.send_json({'error': err[1]}, err[0])
+        items = body.get('items') or []
+        if not isinstance(items, list) or not 0 < len(items) <= 2000:
+            return self.send_json({'error': '対象がありません'}, 400)
+        done, errors, renamed = [], [], []
+        for rel in items:
+            full, e = self.item_path(rel)
+            if e:
+                errors.append(f'{rel}：{e[1]}'); continue
+            name = os.path.basename(full)
+            if os.path.dirname(full) == dest:
+                errors.append(f'{name}：すでにこのフォルダにあります'); continue
+            if os.path.isdir(full) and (dest == full or dest.startswith(full + os.sep)):
+                errors.append(f'{name}：フォルダをその中には移せません'); continue
+            try:
+                with NAME_LOCK:
+                    final = self.free_name(dest, name, os.path.isdir(full))
+                    os.rename(full, os.path.join(dest, final))
+                done.append(rel)
+                if final != name:
+                    renamed.append(f'{name} → {final}')
+            except OSError as ex:
+                errors.append(f'{name}：移せませんでした（{type(ex).__name__}）')
+        self.send_json({'ok': True, 'done': done, 'errors': errors, 'renamed': renamed})
+
+    def api_rename(self, body):
+        full, err = self.item_path(body.get('path', ''))
+        if err:
+            return self.send_json({'error': err[1]}, err[0])
+        name = clean_name(body.get('name', ''))
+        isdir = os.path.isdir(full)
+        if not name or (isdir and name in SKIP_DIRS):
+            return self.send_json({'error': 'この名前は使えません'}, 400)
+        if not isdir and not kind_of(name):
+            return self.send_json({'error': '写真・動画の拡張子（.jpg など）を残してください'}, 400)
+        new = os.path.join(os.path.dirname(full), name)
+        with NAME_LOCK:
+            if os.path.lexists(new) and not os.path.samefile(new, full):
+                return self.send_json({'error': '同じ名前がすでにあります'}, 409)
+            try:
+                os.rename(full, new)
+            except OSError as e:
+                return self.send_json({'error': '名前を変えられませんでした（' + type(e).__name__ + '）'}, 500)
+        self.send_json({'ok': True, 'name': name})
+
     def safe_path(self, rel, base):
         """base の中にあるパスだけを許可する（.. や隠しファイル、シンボリックリンクでの抜け出しを防ぐ）"""
         parts = [p for p in rel.split('/') if p not in ('', '.')]
@@ -385,6 +570,14 @@ class Handler(BaseHTTPRequestHandler):
                 if not self.allowed(rel):
                     return self.send_json({'error': 'ログインしてください'}, 401)
                 return self.api_list(rel)
+            if path == '/api/trash':
+                return self.api_trash_list()
+            if path.startswith('/trashthumb/'):
+                tid = path.split('/', 2)[2]
+                for t, m in self.trash_items():
+                    if t == tid and m.get('kind') in ('image', 'video'):
+                        return self.send_thumb(os.path.join(self.trash_dir(), t, m['name']), head)
+                return self.send_err(404, 'not found')
             if path.startswith('/media/') or path.startswith('/thumb/'):
                 rel = path.split('/', 2)[2]
                 if not self.allowed(rel) or not [p for p in rel.split('/') if p][1:]:

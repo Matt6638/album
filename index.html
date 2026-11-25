@@ -128,6 +128,29 @@ dialog#pwDlg::backdrop{background:rgba(0,0,0,.6)}
 #selbar{position:fixed;left:0;right:0;bottom:0;z-index:250;display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:12px 16px calc(12px + env(safe-area-inset-bottom));background:#17181cf2;border-top:1px solid var(--line);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
 #selbar span{flex:1;min-width:8em;font-size:14px}
 #selbar[hidden]{display:none}
+body.selecting .album[data-selpath] .cover::after{content:'';position:absolute;top:8px;right:8px;width:24px;height:24px;border-radius:50%;border:2px solid #fff;background:#0005;box-shadow:0 0 0 1px #0006}
+body.selecting .album.sel .cover::after{background:var(--accent) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M6 12l4 4 8-8' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/16px no-repeat}
+body.selecting .album.sel .cover{outline:3px solid var(--accent);outline-offset:-3px}
+dialog#mvDlg{background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:14px;padding:18px 20px;width:min(460px,94vw)}
+dialog#mvDlg::backdrop{background:rgba(0,0,0,.6)}
+#mvDlg h3{margin:0 0 10px;font-size:16px}
+.mvpath{display:flex;flex-wrap:wrap;align-items:center;gap:2px;font-size:13px;margin-bottom:8px}
+.mvpath button{background:none;border:0;color:var(--accent);padding:3px 4px;cursor:pointer;font-size:13px}
+.mvpath span{color:var(--sub)}
+.mvlist{max-height:46vh;overflow:auto;border:1px solid var(--line);border-radius:10px;padding:4px}
+.mvdir{display:block;width:100%;text-align:left;background:none;border:0;color:var(--text);padding:11px 10px;font-size:15px;border-radius:8px;cursor:pointer}
+.mvdir:hover{background:var(--panel2)}
+.mvnone{color:var(--sub);padding:12px;font-size:13px}
+#mvDlg .row{display:flex;gap:8px;justify-content:flex-end;margin-top:12px}
+.trash{display:flex;flex-direction:column;gap:8px;margin-top:16px}
+.trow{display:flex;align-items:center;gap:12px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px}
+.tth{width:64px;height:64px;border-radius:8px;background:var(--panel2);position:relative;overflow:hidden;flex:none;display:flex;align-items:center;justify-content:center;color:var(--sub);font-size:22px}
+.tth img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.tin{flex:1;min-width:0}
+.tn{font-weight:600;word-break:break-all}
+.ts{color:var(--sub);font-size:12px;line-height:1.6;margin-top:2px}
+.tbt{display:flex;flex-direction:column;gap:6px}
+.tbt .btn{font-size:13px;padding:6px 10px}
 @media (max-width:640px){#vInterval,#vFull{display:none}}
 body.selecting .tile::after{content:'';position:absolute;top:6px;right:6px;width:22px;height:22px;border-radius:50%;border:2px solid #fff;background:#0005;box-shadow:0 0 0 1px #0006}
 body.selecting .tile.sel::after{background:var(--accent) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M6 12l4 4 8-8' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/16px no-repeat}
@@ -210,6 +233,7 @@ body.selecting .tile.sel img{opacity:.7}
  <input type="file" id="upInput" multiple hidden>
 <div id="xfer" hidden></div>
 <div id="selbar" hidden></div>
+<dialog id="mvDlg"></dialog>
 <input type="file" id="stayInput" accept=".json,application/json" hidden>
 
 <script>
@@ -564,7 +588,7 @@ function renderServerHome(){
         <div class="nm">${esc(S.name)}<small>${S.available ? (S.me ? `${esc(S.me.name)}さんとしてログイン中` : 'このMacにつながっている外付けHDD') : 'HDDが見つかりません。Macに接続されているか確認してください'}</small></div>
         <button class="btn primary" id="srvOpen" ${S.available ? '' : 'disabled'}>開く</button>
       </div></div>
-      ${S.me ? '<button class="btn" id="logoutBtn">ログアウト</button>' : ''}
+      <div class="ftools"><button class="btn" id="trashBtn">🗑 ゴミ箱</button>${S.me ? '<button class="btn" id="logoutBtn">ログアウト</button>' : ''}</div>
       ${stayBoxHtml()}`}
   </div>`;
   if (needLogin){
@@ -580,6 +604,7 @@ function renderServerHome(){
     if (SERVER.auth && !SERVER.me){ renderHome(); return; }
     startLibrary({type: 'http', name: SERVER.name}, {name: SERVER.name, path: SERVER.name, ref: ''});
   };
+  $('#trashBtn').onclick = () => renderTrash();
   if ($('#logoutBtn')) $('#logoutBtn').onclick = async () => {
     if (!confirm('ログアウトしますか？')) return;
     try { await api('api/logout'); } catch (e) {}
@@ -763,8 +788,8 @@ async function renderFolder(){
   $('#slideAllBtn').onclick = () => openViewer(media, 0, true);
 
   main.innerHTML = '';
-  SEL.media = media; if (SEL.on) setSelect(false);
-  const tools = folderTools(node, media);
+  SEL.all.clear(); if (SEL.on) setSelect(false);
+  const tools = folderTools(node, media, dirs);
   if (tools) main.appendChild(tools);
   if (!dirs.length && !media.length){
     main.insertAdjacentHTML('beforeend', '<div class="empty">このフォルダには写真・動画もフォルダもありません。</div>'); return;
@@ -772,7 +797,8 @@ async function renderFolder(){
   if (dirs.length){
     const h = document.createElement('h2'); h.className = 'sec'; h.textContent = `アルバム（${dirs.length}）`; main.appendChild(h);
     const wrap = document.createElement('div'); wrap.className = 'albums'; main.appendChild(wrap);
-    for (const d of dirs) wrap.appendChild(albumCard(d));
+    const w = canWriteHere(node);
+    for (const d of dirs){ const c = albumCard(d); if (w) selectable(c, d, 'dir', () => goInto(d)); wrap.appendChild(c); }
   }
   if (media.length){
     const p = media.filter(m => m.kind === 'image').length, v = media.length - p;
@@ -780,7 +806,7 @@ async function renderFolder(){
     h.textContent = `写真・動画（${[p ? '写真 ' + p : '', v ? '動画 ' + v : ''].filter(Boolean).join('・')}）`;
     main.appendChild(h);
     const grid = document.createElement('div'); grid.className = 'grid'; main.appendChild(grid);
-    media.forEach((m, i) => { const t = mediaTile(m, () => SEL.on ? toggleTile(t, m) : openViewer(media, i, false)); grid.appendChild(t); });
+    media.forEach((m, i) => { const t = mediaTile(m, () => {}); selectable(t, m, 'media', () => openViewer(media, i, false)); grid.appendChild(t); });
   }
   const y = scrollPos.get(node.path) || 0;
   requestAnimationFrame(() => window.scrollTo(0, y));
@@ -843,7 +869,7 @@ function mediaTile(m, onOpen){
 /* ============ 追加（アップロード）・保存（抜き出し） ============ */
 const isTouch = matchMedia('(pointer: coarse)').matches;
 const canWriteHere = node => lib && lib.type === 'http' && SERVER && (node.ref !== '' || !SERVER.auth);
-const SEL = {on: false, refs: new Set(), media: []};
+const SEL = {on: false, map: new Map(), all: new Map()};
 let BUSY = false;
 window.addEventListener('beforeunload', e => { if (BUSY){ e.preventDefault(); e.returnValue = ''; } });
 
@@ -949,40 +975,158 @@ async function saveItems(items){
   };
 }
 
+/* 選択モード：保存・移動・名前変更・削除（ゴミ箱） */
 function setSelect(on){
-  SEL.on = on; SEL.refs.clear();
+  SEL.on = on; SEL.map.clear();
   document.body.classList.toggle('selecting', on);
-  main.querySelectorAll('.tile.sel').forEach(t => t.classList.remove('sel'));
+  main.querySelectorAll('.sel').forEach(t => t.classList.remove('sel'));
   updateSelbar();
 }
 function updateSelbar(){
   const bar = $('#selbar');
   if (!SEL.on){ bar.hidden = true; return; }
+  const n = SEL.map.size, items = [...SEL.map.values()];
+  const nMedia = items.filter(x => x.type === 'media').length;
+  const w = current && canWriteHere(current);
   bar.hidden = false;
-  bar.innerHTML = `<span>${SEL.refs.size}件を選択中</span>
+  bar.innerHTML = `<span>${n}件を選択中</span>
     <button class="btn" id="sAll">すべて選択</button>
-    <button class="btn primary" id="sSave" ${SEL.refs.size ? '' : 'disabled'}>⬇ 保存</button>
+    <button class="btn primary" id="sSave" ${nMedia ? '' : 'disabled'}>⬇ 保存</button>
+    ${w ? `<button class="btn" id="sMove" ${n ? '' : 'disabled'}>移動</button>
+    <button class="btn" id="sRen" ${n === 1 ? '' : 'disabled'}>名前変更</button>
+    <button class="btn danger" id="sDel" ${n ? '' : 'disabled'}>🗑 削除</button>` : ''}
     <button class="btn" id="sCancel">やめる</button>`;
-  $('#sAll').onclick = () => { SEL.media.forEach(m => SEL.refs.add(m.path)); main.querySelectorAll('.tile').forEach(t => t.classList.add('sel')); updateSelbar(); };
-  $('#sSave').onclick = () => { const items = SEL.media.filter(m => SEL.refs.has(m.path)); setSelect(false); saveItems(items); };
+  $('#sAll').onclick = () => { main.querySelectorAll('[data-selpath]').forEach(el => { const x = SEL.all.get(el.dataset.selpath); if (x){ SEL.map.set(el.dataset.selpath, x); el.classList.add('sel'); } }); updateSelbar(); };
+  $('#sSave').onclick = () => { const its = items.filter(x => x.type === 'media').map(x => x.item); setSelect(false); saveItems(its); };
   $('#sCancel').onclick = () => setSelect(false);
+  if (!w) return;
+  $('#sDel').onclick = () => trashItems(items);
+  $('#sRen').onclick = () => renameItem(items[0]);
+  $('#sMove').onclick = () => moveItems(items);
 }
-function toggleTile(el, m){
-  if (SEL.refs.has(m.path)) SEL.refs.delete(m.path); else SEL.refs.add(m.path);
-  el.classList.toggle('sel', SEL.refs.has(m.path));
+function toggleSel(el, item, type){
+  if (SEL.map.has(item.path)) SEL.map.delete(item.path); else SEL.map.set(item.path, {type, item});
+  el.classList.toggle('sel', SEL.map.has(item.path));
   updateSelbar();
 }
-function folderTools(node, media){
+function selectable(el, item, type, onOpen){
+  el.dataset.selpath = item.path;
+  SEL.all.set(item.path, {type, item});
+  el.onclick = () => SEL.on ? toggleSel(el, item, type) : onOpen();
+}
+async function postJson(path, body){
+  const r = await fetch(path, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+  let j = {}; try { j = await r.json(); } catch (e) {}
+  if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+  return j;
+}
+function afterChange(j, okMsg){
+  setSelect(false); listCache.clear(); metaCache.clear();
+  const errs = (j && j.errors) || [], ren = (j && j.renamed) || [];
+  if (errs.length || ren.length){
+    const lines = [okMsg];
+    if (ren.length) lines.push('同じ名前があったため別名にしたもの：', ...ren);
+    if (errs.length) lines.push('できなかったもの：', ...errs);
+    xfer.show(`<div class="xt">${lines.map(esc).join('<br>')}</div><div class="xa"><button class="btn primary" id="xOk">OK</button></div>`);
+    $('#xOk').onclick = () => xfer.hide();
+  } else toast(okMsg);
+  renderFolder();
+}
+async function trashItems(items){
+  const n = items.length, nd = items.filter(x => x.type === 'dir').length;
+  if (!confirm(`${n}件をゴミ箱に移します。${nd ? '\nフォルダは中身ごと移ります。' : ''}\nゴミ箱（ホーム画面の「🗑 ゴミ箱」）から元に戻せます。`)) return;
+  try { const j = await postJson('api/trash', {items: items.map(x => x.item.ref)}); afterChange(j, `${j.done.length}件をゴミ箱に移しました`); }
+  catch (e) { alert('削除できませんでした：' + e.message); }
+}
+async function renameItem(x){
+  const name = x.item.name, isDir = x.type === 'dir';
+  const ext = isDir ? '' : name.slice(name.lastIndexOf('.'));
+  const stem = isDir ? name : name.slice(0, name.lastIndexOf('.'));
+  let nn = prompt(isDir ? '新しいフォルダ名' : `新しい名前（拡張子 ${ext} はそのまま付きます）`, stem);
+  if (nn == null) return;
+  nn = nn.trim(); if (!nn || nn === stem) return;
+  if (!isDir) nn += ext;
+  try { const j = await postJson('api/rename', {path: x.item.ref, name: nn}); afterChange(j, `名前を「${j.name}」に変えました`); }
+  catch (e) { alert('名前を変えられませんでした：' + e.message); }
+}
+/* 移動先を選ぶ画面 */
+function pickFolder(startRef, title){
+  return new Promise(resolve => {
+    const d = $('#mvDlg');
+    let ref = startRef;
+    const close = v => { d.close(); resolve(v); };
+    async function draw(){
+      const parts = ref ? ref.split('/') : [];
+      d.innerHTML = `<h3>${esc(title)}</h3><div class="mvpath"><button data-i="0">${esc(SERVER.name)}</button>${parts.map((p, i) => `<span>›</span><button data-i="${i + 1}">${esc(p)}</button>`).join('')}</div>
+        <div class="mvlist">読み込み中…</div>
+        <div class="row"><button class="btn" id="mvNo">やめる</button><button class="btn primary" id="mvOk" ${ref || !SERVER.auth ? '' : 'disabled'}>ここに移動</button></div>`;
+      d.querySelectorAll('.mvpath button').forEach(b => b.onclick = () => { ref = parts.slice(0, +b.dataset.i).join('/'); draw(); });
+      $('#mvNo').onclick = () => close(null);
+      $('#mvOk').onclick = () => close(ref);
+      try {
+        const r = await fetch('api/list?path=' + encodeURIComponent(ref), {cache: 'no-store'});
+        const j = await r.json(); if (!r.ok) throw new Error(j.error || r.status);
+        const list = d.querySelector('.mvlist');
+        list.innerHTML = j.dirs.length ? '' : '<div class="mvnone">（この中にフォルダはありません）</div>';
+        j.dirs.sort((a, b) => collator.compare(a, b)).forEach(n => {
+          const b = document.createElement('button'); b.className = 'mvdir'; b.textContent = '📁 ' + n;
+          b.onclick = () => { ref = ref ? ref + '/' + n : n; draw(); };
+          list.appendChild(b);
+        });
+      } catch (e) { d.querySelector('.mvlist').textContent = '読み込めませんでした：' + e.message; }
+    }
+    draw(); d.showModal();
+  });
+}
+async function moveItems(items){
+  const dest = await pickFolder(current.ref, `${items.length}件の移動先を選んでください`);
+  if (dest == null) return;
+  if (dest === current.ref){ toast('いまと同じフォルダです'); return; }
+  try { const j = await postJson('api/move', {items: items.map(x => x.item.ref), dest}); afterChange(j, `${j.done.length}件を「${dest.split('/').pop()}」に移しました`); }
+  catch (e) { alert('移動できませんでした：' + e.message); }
+}
+/* ゴミ箱 */
+async function renderTrash(){
+  current = null; trail = [];
+  setHeaderForHome();
+  crumbs.innerHTML = '<span class="cur">ゴミ箱</span>';
+  main.innerHTML = '<div class="loading">読み込み中…</div>';
+  let items;
+  try { const r = await fetch('api/trash', {cache: 'no-store'}); const j = await r.json(); if (!r.ok) throw new Error(j.error || r.status); items = j.items; }
+  catch (e) { main.innerHTML = `<div class="errbox">ゴミ箱を読み込めませんでした：${esc(e.message)}</div>`; return; }
+  main.innerHTML = `<div class="home"><h1>🗑 ゴミ箱</h1>
+    <p class="lead">削除したものはここに入ります。「元に戻す」で元の場所に戻ります。「完全に削除」したものは戻せません。</p>
+    <button class="btn" id="tBack">← 戻る</button>
+    <div class="trash">${items.length ? items.map(it => `<div class="trow" data-id="${esc(it.id)}">
+      <div class="tth">${it.kind === 'image' || it.kind === 'video' ? `<img src="trashthumb/${encodeURIComponent(it.id)}" alt="" loading="lazy" onerror="this.remove()">` : ''}<b>${it.kind === 'dir' ? '📁' : it.kind === 'video' ? '▶' : '▢'}</b></div>
+      <div class="tin"><div class="tn">${esc(it.name)}</div><div class="ts">元の場所：${esc(it.orig.split('/').slice(0, -1).join(' › '))}<br>${fmtDate(it.at)}${it.by ? '・' + esc(it.by) : ''}${it.size ? '・' + fmtSize(it.size) : ''}</div></div>
+      <div class="tbt"><button class="btn primary" data-act="restore">元に戻す</button><button class="btn danger" data-act="purge">完全に削除</button></div>
+    </div>`).join('') : '<div class="empty">ゴミ箱は空です</div>'}</div></div>`;
+  $('#tBack').onclick = () => renderHome();
+  main.querySelectorAll('.trow button').forEach(b => b.onclick = async () => {
+    const row = b.closest('.trow'), id = row.dataset.id, name = row.querySelector('.tn').textContent;
+    const restore = b.dataset.act === 'restore';
+    if (!restore && !confirm(`「${name}」を完全に削除します。元に戻せません。よろしいですか？`)) return;
+    try {
+      const j = await postJson(restore ? 'api/trash/restore' : 'api/trash/purge', {ids: [id]});
+      if (j.errors && j.errors.length) throw new Error(j.errors.join(' / '));
+      listCache.clear(); metaCache.clear();
+      toast(restore ? `「${name}」を元に戻しました` : `「${name}」を完全に削除しました`);
+      renderTrash();
+    } catch (e) { alert((restore ? '元に戻せませんでした：' : '削除できませんでした：') + e.message); }
+  });
+}
+function folderTools(node, media, dirs){
   const w = canWriteHere(node);
   if (!w && !media.length) return null;
   const bar = document.createElement('div'); bar.className = 'ftools';
   bar.innerHTML = `${w ? '<button class="btn primary" id="fAdd">＋ 写真・動画を追加</button><button class="btn" id="fDir">＋ フォルダ</button>' : ''}
-    ${media.length ? '<button class="btn" id="fSel">選択して保存</button>' : ''}`;
+    ${media.length || (w && dirs.length) ? `<button class="btn" id="fSel">${w ? '選択（保存・移動・削除）' : '選択して保存'}</button>` : ''}`;
   if (w){
     bar.querySelector('#fAdd').onclick = () => { if (BUSY) return toast('処理中です'); const inp = $('#upInput'); inp.value = ''; inp.onchange = () => uploadFiles(node, inp.files); inp.click(); };
     bar.querySelector('#fDir').onclick = () => makeFolder(node);
   }
-  if (media.length) bar.querySelector('#fSel').onclick = () => setSelect(!SEL.on);
+  const s = bar.querySelector('#fSel'); if (s) s.onclick = () => setSelect(!SEL.on);
   return bar;
 }
 
