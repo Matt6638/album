@@ -1254,14 +1254,23 @@ document.addEventListener('keydown', e => {
 let idleT = null;
 function poke(){ viewer.classList.remove('idle'); clearTimeout(idleT); idleT = setTimeout(() => viewer.classList.add('idle'), 2500); }
 viewer.addEventListener('mousemove', poke);
-/* スワイプで前後へ */
-let sx = null, sy = null;
-stage.addEventListener('pointerdown', e => { if (e.pointerType !== 'mouse'){ sx = e.clientX; sy = e.clientY; } });
+/* スマホ：タップで次へ、軽く弾く（フリック）と前後へ（右へ弾く＝前へ戻る、左へ弾く＝次へ） */
+let sx = null, sy = null, st = 0, multi = false;
+stage.addEventListener('pointerdown', e => {
+  if (e.pointerType === 'mouse') return;
+  if (sx !== null) multi = true;               // 2本指（拡大）のときは何もしない
+  else { sx = e.clientX; sy = e.clientY; st = performance.now(); multi = false; }
+});
+stage.addEventListener('pointercancel', () => { sx = null; });
 stage.addEventListener('pointerup', e => {
-  if (sx === null) return;
-  const dx = e.clientX - sx, dy = e.clientY - sy; sx = null;
-  if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5) (dx < 0 ? next : prev)();
-  else poke();
+  if (sx === null || e.pointerType === 'mouse') return;
+  const dx = e.clientX - sx, dy = e.clientY - sy, dt = performance.now() - st; sx = null;
+  if (multi || (window.visualViewport && visualViewport.scale > 1.05)) return;   // 拡大中は送らない
+  const ax = Math.abs(dx), ay = Math.abs(dy);
+  if (ax > 20 && ax > ay * 1.2 && (dt < 400 || ax > 60)){ (dx < 0 ? next : prev)(); poke(); return; }
+  const onCtrl = e.target.closest('video, button, a, input, select');
+  if (ax < 12 && ay < 12 && dt < 350 && !onCtrl){ next(); poke(); return; }
+  poke();
 });
 
 /* ============ 宿泊データ（カレンダーから作った宿泊記録.json） ============ */
