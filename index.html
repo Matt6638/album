@@ -8,7 +8,7 @@
 <meta name="theme-color" content="#111214">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
-<meta name="apple-mobile-web-app-title" content="家族アルバム">
+<meta name="apple-mobile-web-app-title" content="家族ファイル">
 <style>
 :root{--bg:#111214;--panel:#1b1d21;--panel2:#25282e;--text:#ececee;--sub:#9a9ca3;--accent:#3d6fe0;--line:#2c2f35}
 *{box-sizing:border-box}
@@ -155,6 +155,16 @@ dialog#mvDlg::backdrop{background:rgba(0,0,0,.6)}
 body.selecting .tile::after{content:'';position:absolute;top:6px;right:6px;width:22px;height:22px;border-radius:50%;border:2px solid #fff;background:#0005;box-shadow:0 0 0 1px #0006}
 body.selecting .tile.sel::after{background:var(--accent) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M6 12l4 4 8-8' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/16px no-repeat}
 body.selecting .tile.sel img{opacity:.7}
+.docs{display:flex;flex-direction:column;gap:6px}
+.doc{display:flex;align-items:center;gap:10px;width:100%;text-align:left;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px;color:inherit;font:inherit;cursor:pointer}
+.doc .di{font-size:22px;flex:none}
+.doc .dn{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.doc .dm{flex:none;color:var(--sub);font-size:12px}
+body.selecting .doc{padding-left:40px;position:relative}
+body.selecting .doc::before{content:'';position:absolute;left:10px;top:50%;margin-top:-11px;width:22px;height:22px;border-radius:50%;border:2px solid #fff;background:#0005}
+body.selecting .doc.sel{border-color:var(--accent)}
+body.selecting .doc.sel::before{background:var(--accent) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M6 12l4 4 8-8' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/16px no-repeat}
+@media (max-width:600px){.doc .dm{display:none}}
 /* ログイン */
 .whos{display:flex;flex-wrap:wrap;gap:10px;margin:6px 0 18px}
 .whos .who{font-size:17px;padding:12px 20px;border-radius:12px}
@@ -343,7 +353,7 @@ const scrollPos = new Map();
 async function listDir(node){
   if (listCache.has(node.path)) return listCache.get(node.path);
   const p = (async () => {
-    const dirs = [], media = [];
+    const dirs = [], media = [], docs = [];
     if (lib.type === 'fs'){
       for await (const [name, h] of node.ref.entries()){
         if (name.startsWith('.')) continue;
@@ -361,12 +371,15 @@ async function listDir(node){
       if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
       const sub = name => node.ref ? node.ref + '/' + name : name;
       for (const name of j.dirs) dirs.push({name, path: node.path + '/' + name, ref: sub(name)});
-      for (const f of j.files){ const k = kindOf(f.name); if (k) media.push({name: f.name, path: node.path + '/' + f.name, kind: k, ref: sub(f.name), size: f.size, mtime: f.mtime}); }
+      for (const f of j.files){
+        const k = kindOf(f.name), it = {name: f.name, path: node.path + '/' + f.name, kind: k || 'doc', ref: sub(f.name), size: f.size, mtime: f.mtime};
+        (k ? media : docs).push(it);
+      }
     } else {
       for (const [name, child] of node.ref.dirs) dirs.push({name, path: node.path + '/' + name, ref: child});
       for (const f of node.ref.files) media.push({name: f.name, path: node.path + '/' + f.name, kind: kindOf(f.name), ref: f});
     }
-    return {dirs, media};
+    return {dirs, media, docs};
   })();
   listCache.set(node.path, p);
   p.catch(() => listCache.delete(node.path));
@@ -388,7 +401,7 @@ function folderMeta(node, depth = 0){
   const key = node.path + '|' + sortOrder();
   if (metaCache.has(key)) return metaCache.get(key);
   const p = (async () => {
-    const {dirs, media} = await listDir(node);
+    const {dirs, media, docs = []} = await listDir(node);
     const sorted = sortMedia(media);
     let cover = sorted.find(m => m.kind === 'image') || sorted[0] || null;
     if (!cover && depth < 3){
@@ -397,7 +410,7 @@ function folderMeta(node, depth = 0){
         if (m.cover){ cover = m.cover; break; }
       }
     }
-    return {photos: media.filter(m => m.kind === 'image').length, videos: media.filter(m => m.kind === 'video').length, dirCount: dirs.length, cover};
+    return {photos: media.filter(m => m.kind === 'image').length, videos: media.filter(m => m.kind === 'video').length, docs: docs.length, dirCount: dirs.length, cover};
   })();
   metaCache.set(key, p);
   p.catch(() => metaCache.delete(key));
@@ -542,7 +555,7 @@ let current = null;        // 表示中のフォルダノード
 let trail = [];            // ルートから現在までのノード列
 
 function setHeaderForHome(){
-  crumbs.innerHTML = `<span class="cur">${SERVER ? '家族アルバム' : 'フォトアルバム'}</span>`;
+  crumbs.innerHTML = `<span class="cur">${SERVER ? '家族ファイル' : 'フォトアルバム'}</span>`;
   $('#sortSel').hidden = true; $('#slideAllBtn').hidden = true;
 }
 
@@ -579,7 +592,7 @@ function renderServerHome(){
   const needLogin = S.auth && !S.me;
   main.innerHTML = `
   <div class="home">
-    <h1>家族アルバム</h1>
+    <h1>家族ファイル</h1>
     ${needLogin ? `
       <p class="lead">自分の名前を選んでください。</p>
       <div class="whos">${S.users.map(u => `<button class="btn who" data-id="${esc(u.id)}">${esc(u.name)}</button>`).join('')}</div>
@@ -648,7 +661,7 @@ function showAuthForm(u){
 async function renderHome(){
   current = null; trail = [];
   setHeaderForHome();
-  document.title = SERVER ? '家族アルバム' : 'フォトアルバム';
+  document.title = SERVER ? '家族ファイル' : 'フォトアルバム';
   if (SERVER) return renderServerHome();
   let libs = [];
   if (HAS_FSA) libs = (await db.all('libs').catch(() => [])).sort((a, b) => a.added - b.added);
@@ -771,7 +784,7 @@ async function renderFolder(){
   current = node;
   const token = ++renderToken;
   renderCrumbs();
-  document.title = node.name + ' - フォトアルバム';
+  document.title = node.name + (SERVER ? ' - 家族ファイル' : ' - フォトアルバム');
   main.innerHTML = '<div class="loading">読み込み中…</div>';
   let listing;
   try { listing = await listDir(node); }
@@ -782,20 +795,20 @@ async function renderFolder(){
     return;
   }
   if (token !== renderToken) return;
-  const dirs = sortDirs(listing.dirs), media = sortMedia(listing.media);
+  const dirs = sortDirs(listing.dirs), media = sortMedia(listing.media), docs = sortMedia(listing.docs || []);
   $('#sortSel').hidden = dirs.length < 2; $('#sortSel').value = sortOrder();
   $('#slideAllBtn').hidden = media.length === 0;
   $('#slideAllBtn').onclick = () => openViewer(media, 0, true);
 
   main.innerHTML = '';
   SEL.all.clear(); if (SEL.on) setSelect(false);
-  const tools = folderTools(node, media, dirs);
+  const tools = folderTools(node, media, dirs, docs);
   if (tools) main.appendChild(tools);
-  if (!dirs.length && !media.length){
-    main.insertAdjacentHTML('beforeend', '<div class="empty">このフォルダには写真・動画もフォルダもありません。</div>'); return;
+  if (!dirs.length && !media.length && !docs.length){
+    main.insertAdjacentHTML('beforeend', '<div class="empty">このフォルダにはファイルもフォルダもありません。</div>'); return;
   }
   if (dirs.length){
-    const h = document.createElement('h2'); h.className = 'sec'; h.textContent = `アルバム（${dirs.length}）`; main.appendChild(h);
+    const h = document.createElement('h2'); h.className = 'sec'; h.textContent = `${SERVER ? 'フォルダ' : 'アルバム'}（${dirs.length}）`; main.appendChild(h);
     const wrap = document.createElement('div'); wrap.className = 'albums'; main.appendChild(wrap);
     const w = canWriteHere(node);
     for (const d of dirs){ const c = albumCard(d); if (w) selectable(c, d, 'dir', () => goInto(d)); wrap.appendChild(c); }
@@ -807,6 +820,11 @@ async function renderFolder(){
     main.appendChild(h);
     const grid = document.createElement('div'); grid.className = 'grid'; main.appendChild(grid);
     media.forEach((m, i) => { const t = mediaTile(m, () => {}); selectable(t, m, 'media', () => openViewer(media, i, false)); grid.appendChild(t); });
+  }
+  if (docs.length){
+    const h = document.createElement('h2'); h.className = 'sec'; h.textContent = `ファイル（${docs.length}）`; main.appendChild(h);
+    const list = document.createElement('div'); list.className = 'docs'; main.appendChild(list);
+    docs.forEach(d => { const r = docRow(d); selectable(r, d, 'doc', () => openDoc(d)); list.appendChild(r); });
   }
   const y = scrollPos.get(node.path) || 0;
   requestAnimationFrame(() => window.scrollTo(0, y));
@@ -830,6 +848,7 @@ function albumCard(d){
     const parts = [];
     if (meta.photos) parts.push(`写真 ${meta.photos}`);
     if (meta.videos) parts.push(`動画 ${meta.videos}`);
+    if (meta.docs) parts.push(`ファイル ${meta.docs}`);
     if (meta.dirCount) parts.push(`フォルダ ${meta.dirCount}`);
     el.querySelector('.s').textContent = parts.join('・') || '空';
     if (meta.cover){
@@ -844,6 +863,28 @@ function albumCard(d){
     }
   });
   return el;
+}
+
+/* 写真・動画以外のファイル（PDF・Excel など） */
+function docIcon(name){
+  const e = name.slice(name.lastIndexOf('.') + 1).toLowerCase();
+  if (e === 'pdf') return '📕';
+  if (['xls','xlsx','xlsm','csv','numbers'].includes(e)) return '📊';
+  if (['doc','docx','pages','txt','rtf','md'].includes(e)) return '📝';
+  if (['ppt','pptx','key'].includes(e)) return '📽';
+  if (['zip','7z','rar','lzh','gz'].includes(e)) return '🗜';
+  if (['mp3','m4a','wav','aac','flac'].includes(e)) return '🎵';
+  return '📄';
+}
+function docRow(d){
+  const el = document.createElement('button'); el.className = 'doc'; el.title = d.name;
+  el.innerHTML = `<span class="di">${docIcon(d.name)}</span><span class="dn">${esc(d.name)}</span>
+    <span class="dm">${d.size != null ? fmtSize(d.size) : ''}${d.mtime ? '・' + fmtDate(d.mtime) : ''}</span>`;
+  return el;
+}
+function openDoc(d){
+  if (lib.type !== 'http') return toast('この表示方法では開けません');
+  window.open(mediaUrl(d), '_blank');
 }
 
 function mediaTile(m, onOpen){
@@ -899,8 +940,8 @@ function xhrUpload(dirRef, file, onProgress){
 }
 
 async function uploadFiles(node, files){
-  const all = [...files], list = all.filter(f => kindOf(f.name)), skipped = all.length - list.length;
-  if (!list.length){ toast('写真・動画のファイルを選んでください'); return; }
+  const all = [...files], list = all.filter(f => f.name && !f.name.startsWith('.')), skipped = all.length - list.length;
+  if (!list.length){ toast('追加するファイルを選んでください'); return; }
   const total = list.reduce((s, f) => s + f.size, 0) || 1;
   let base = 0, ok = 0; const fails = [], renamed = [];
   BUSY = true;
@@ -918,7 +959,7 @@ async function uploadFiles(node, files){
   listCache.clear(); metaCache.clear();
   const lines = [`${ok}件をHDDに追加しました`];
   if (renamed.length) lines.push(`同じ名前があったため別名で保存：${renamed.length}件`);
-  if (skipped) lines.push(`写真・動画ではないため追加しなかったファイル：${skipped}件`);
+  if (skipped) lines.push(`名前が「.」で始まるため追加しなかったファイル：${skipped}件`);
   if (fails.length) lines.push('追加できなかったもの：', ...fails);
   xfer.show(`<div class="xt">${lines.map(esc).join('<br>')}</div><div class="xa"><button class="btn primary" id="xOk">OK</button></div>`);
   $('#xOk').onclick = () => xfer.hide();
@@ -961,7 +1002,7 @@ async function saveItems(items){
     for (let i = 0; i < items.length; i++){
       xfer.bar(`保存の準備中 ${i + 1}/${items.length}：${items[i].name}`, i / items.length);
       const f = await getFile(items[i]);
-      files.push(new File([f], items[i].name, {type: f.type || (items[i].kind === 'video' ? 'video/mp4' : 'image/jpeg'), lastModified: f.lastModified}));
+      files.push(new File([f], items[i].name, {type: f.type || (items[i].kind === 'video' ? 'video/mp4' : items[i].kind === 'image' ? 'image/jpeg' : 'application/octet-stream'), lastModified: f.lastModified}));
     }
   } catch (e) { BUSY = false; xfer.hide(); alert('読み込めませんでした：' + e.message); return; }
   BUSY = false;
@@ -986,7 +1027,7 @@ function updateSelbar(){
   const bar = $('#selbar');
   if (!SEL.on){ bar.hidden = true; return; }
   const n = SEL.map.size, items = [...SEL.map.values()];
-  const nMedia = items.filter(x => x.type === 'media').length;
+  const nMedia = items.filter(x => x.type === 'media' || x.type === 'doc').length;
   const w = current && canWriteHere(current);
   bar.hidden = false;
   bar.innerHTML = `<span>${n}件を選択中</span>
@@ -997,7 +1038,7 @@ function updateSelbar(){
     <button class="btn danger" id="sDel" ${n ? '' : 'disabled'}>🗑 削除</button>` : ''}
     <button class="btn" id="sCancel">やめる</button>`;
   $('#sAll').onclick = () => { main.querySelectorAll('[data-selpath]').forEach(el => { const x = SEL.all.get(el.dataset.selpath); if (x){ SEL.map.set(el.dataset.selpath, x); el.classList.add('sel'); } }); updateSelbar(); };
-  $('#sSave').onclick = () => { const its = items.filter(x => x.type === 'media').map(x => x.item); setSelect(false); saveItems(its); };
+  $('#sSave').onclick = () => { const its = items.filter(x => x.type === 'media' || x.type === 'doc').map(x => x.item); setSelect(false); saveItems(its); };
   $('#sCancel').onclick = () => setSelect(false);
   if (!w) return;
   $('#sDel').onclick = () => trashItems(items);
@@ -1040,9 +1081,10 @@ async function trashItems(items){
 }
 async function renameItem(x){
   const name = x.item.name, isDir = x.type === 'dir';
-  const ext = isDir ? '' : name.slice(name.lastIndexOf('.'));
-  const stem = isDir ? name : name.slice(0, name.lastIndexOf('.'));
-  let nn = prompt(isDir ? '新しいフォルダ名' : `新しい名前（拡張子 ${ext} はそのまま付きます）`, stem);
+  const dot = name.lastIndexOf('.'), hasExt = !isDir && dot > 0;
+  const ext = hasExt ? name.slice(dot) : '';
+  const stem = hasExt ? name.slice(0, dot) : name;
+  let nn = prompt(isDir ? '新しいフォルダ名' : ext ? `新しい名前（拡張子 ${ext} はそのまま付きます）` : '新しい名前', stem);
   if (nn == null) return;
   nn = nn.trim(); if (!nn || nn === stem) return;
   if (!isDir) nn += ext;
@@ -1098,7 +1140,7 @@ async function renderTrash(){
     <p class="lead">削除したものはここに入ります。「元に戻す」で元の場所に戻ります。「完全に削除」したものは戻せません。</p>
     <button class="btn" id="tBack">← 戻る</button>
     <div class="trash">${items.length ? items.map(it => `<div class="trow" data-id="${esc(it.id)}">
-      <div class="tth">${it.kind === 'image' || it.kind === 'video' ? `<img src="trashthumb/${encodeURIComponent(it.id)}" alt="" loading="lazy" onerror="this.remove()">` : ''}<b>${it.kind === 'dir' ? '📁' : it.kind === 'video' ? '▶' : '▢'}</b></div>
+      <div class="tth">${it.kind === 'image' || it.kind === 'video' ? `<img src="trashthumb/${encodeURIComponent(it.id)}" alt="" loading="lazy" onerror="this.remove()">` : ''}<b>${it.kind === 'dir' ? '📁' : it.kind === 'video' ? '▶' : it.kind === 'image' ? '▢' : docIcon(it.name)}</b></div>
       <div class="tin"><div class="tn">${esc(it.name)}</div><div class="ts">元の場所：${esc(it.orig.split('/').slice(0, -1).join(' › '))}<br>${fmtDate(it.at)}${it.by ? '・' + esc(it.by) : ''}${it.size ? '・' + fmtSize(it.size) : ''}</div></div>
       <div class="tbt"><button class="btn primary" data-act="restore">元に戻す</button><button class="btn danger" data-act="purge">完全に削除</button></div>
     </div>`).join('') : '<div class="empty">ゴミ箱は空です</div>'}</div></div>`;
@@ -1116,12 +1158,13 @@ async function renderTrash(){
     } catch (e) { alert((restore ? '元に戻せませんでした：' : '削除できませんでした：') + e.message); }
   });
 }
-function folderTools(node, media, dirs){
+function folderTools(node, media, dirs, docs = []){
   const w = canWriteHere(node);
-  if (!w && !media.length) return null;
+  const files = media.length + docs.length;
+  if (!w && !files) return null;
   const bar = document.createElement('div'); bar.className = 'ftools';
-  bar.innerHTML = `${w ? '<button class="btn primary" id="fAdd">＋ 写真・動画を追加</button><button class="btn" id="fDir">＋ フォルダ</button>' : ''}
-    ${media.length || (w && dirs.length) ? `<button class="btn" id="fSel">${w ? '選択（保存・移動・削除）' : '選択して保存'}</button>` : ''}`;
+  bar.innerHTML = `${w ? '<button class="btn primary" id="fAdd">＋ ファイルを追加</button><button class="btn" id="fDir">＋ フォルダ</button>' : ''}
+    ${files || (w && dirs.length) ? `<button class="btn" id="fSel">${w ? '選択（保存・移動・削除）' : '選択して保存'}</button>` : ''}`;
   if (w){
     bar.querySelector('#fAdd').onclick = () => { if (BUSY) return toast('処理中です'); const inp = $('#upInput'); inp.value = ''; inp.onchange = () => uploadFiles(node, inp.files); inp.click(); };
     bar.querySelector('#fDir').onclick = () => makeFolder(node);

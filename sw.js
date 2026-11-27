@@ -1,5 +1,5 @@
 // アプリ本体だけをキャッシュ（写真・動画は扱わない）。更新を優先するためネットワーク優先。
-const CACHE = 'photo-album-v9';
+const CACHE = 'photo-album-v10';
 const ASSETS = ['./', './index.html', './manifest.webmanifest', './icon.svg', './icon-192.png', './icon-512.png', './apple-touch-icon.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS))); self.skipWaiting(); });
 self.addEventListener('activate', e => {

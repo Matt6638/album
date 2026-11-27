@@ -158,6 +158,16 @@ def kind_of(name):
     e = ext_of(name)
     return 'image' if e in IMG_EXT else 'video' if e in VID_EXT else None
 
+SYS_FILES = {'thumbs.db', 'desktop.ini', 'icon\r'}
+# ブラウザで直接開くと危険な種類（HTML・SVG など）。開かずにダウンロード扱いにする
+RISKY_EXT = {'html', 'htm', 'xhtml', 'shtml', 'svg', 'svgz', 'xml', 'xsl', 'xslt', 'js', 'mjs', 'php', 'swf'}
+
+
+def file_ok(name):
+    """一覧・追加・変更の対象にしてよい普通のファイルか（隠しファイルやシステムのファイルは除く）"""
+    return bool(name) and not name.startswith('.') and name.lower() not in SYS_FILES
+
+
 def ctype(path):
     e = os.path.splitext(path)[1].lower()
     return EXTRA_TYPES.get(e) or mimetypes.guess_type(path)[0] or 'application/octet-stream'
@@ -303,8 +313,8 @@ class Handler(BaseHTTPRequestHandler):
         if err:
             return self.send_json({'error': err[1]}, err[0])
         name = clean_name(q.get('name', [''])[0])
-        if not name or not kind_of(name):
-            return self.send_json({'error': '写真・動画のファイルだけ追加できます'}, 400)
+        if not name or not file_ok(name):
+            return self.send_json({'error': 'このファイル名は使えません'}, 400)
         try:
             n = int(self.headers.get('Content-Length') or -1)
         except ValueError:
@@ -381,8 +391,8 @@ class Handler(BaseHTTPRequestHandler):
         raw = os.path.join(self.server.root, *parts)
         if not full or not os.path.lexists(raw) or os.path.islink(raw) or parts[0] in SKIP_DIRS:
             return None, (404, '見つかりません')
-        if os.path.isfile(full) and not kind_of(parts[-1]):
-            return None, (403, '写真・動画以外のファイルは変更できません')
+        if os.path.isfile(full) and not file_ok(parts[-1]):
+            return None, (403, 'このファイルは変更できません')
         return full, None
 
     def trash_dir(self):
@@ -417,7 +427,7 @@ class Handler(BaseHTTPRequestHandler):
                     size = 0 if isdir else os.path.getsize(full)
                     name = os.path.basename(full)
                     os.rename(full, os.path.join(box, name))
-                    meta = {'orig': self.rel_of(full), 'name': name, 'kind': 'dir' if isdir else kind_of(name),
+                    meta = {'orig': self.rel_of(full), 'name': name, 'kind': 'dir' if isdir else (kind_of(name) or 'file'),
                             'size': size, 'at': int(time.time() * 1000), 'by': uid}
                     with open(os.path.join(self.trash_dir(), tid + '.json'), 'w', encoding='utf-8') as f:
                         json.dump(meta, f, ensure_ascii=False)
@@ -525,8 +535,8 @@ class Handler(BaseHTTPRequestHandler):
         isdir = os.path.isdir(full)
         if not name or (isdir and name in SKIP_DIRS):
             return self.send_json({'error': 'この名前は使えません'}, 400)
-        if not isdir and not kind_of(name):
-            return self.send_json({'error': '写真・動画の拡張子（.jpg など）を残してください'}, 400)
+        if not isdir and os.path.splitext(name)[1].lower() != os.path.splitext(full)[1].lower():
+            return self.send_json({'error': '拡張子（.jpg や .pdf など）は変えられません'}, 400)
         new = os.path.join(os.path.dirname(full), name)
         with NAME_LOCK:
             if os.path.lexists(new) and not os.path.samefile(new, full):
@@ -610,7 +620,7 @@ class Handler(BaseHTTPRequestHandler):
                         if e.is_dir(follow_symlinks=False):
                             if e.name not in SKIP_DIRS and (rel.strip('/') or self.allowed(e.name)):
                                 dirs.append(e.name)
-                        elif e.is_file(follow_symlinks=False) and kind_of(e.name) and (rel.strip('/') or not self.server.auth):
+                        elif e.is_file(follow_symlinks=False) and file_ok(e.name) and (rel.strip('/') or not self.server.auth):
                             st = e.stat()
                             files.append({'name': e.name, 'size': st.st_size, 'mtime': int(st.st_mtime * 1000)})
                     except OSError:
@@ -621,8 +631,11 @@ class Handler(BaseHTTPRequestHandler):
 
     # ---- ファイル送信（動画の途中再生に必要な Range 要求に対応） ----
     def send_file(self, full, head, media, dl=False):
-        if not full or not os.path.isfile(full) or (media and not kind_of(os.path.basename(full))):
+        if not full or not os.path.isfile(full) or (media and not file_ok(os.path.basename(full))):
             return self.send_err(404, 'not found')
+        risky = media and ext_of(os.path.basename(full)) in RISKY_EXT
+        if risky:
+            dl = True
         size = os.path.getsize(full)
         start, end = 0, size - 1
         rng = self.headers.get('Range')
@@ -642,7 +655,8 @@ class Handler(BaseHTTPRequestHandler):
             status = 206
         length = end - start + 1
         self.send_response(status)
-        self.send_header('Content-Type', ctype(full))
+        self.send_header('Content-Type', 'application/octet-stream' if risky else ctype(full))
+        self.send_header('X-Content-Type-Options', 'nosniff')
         self.send_header('Accept-Ranges', 'bytes')
         self.send_header('Content-Length', str(length))
         if status == 206:

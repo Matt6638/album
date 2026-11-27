@@ -1,6 +1,6 @@
 {
-  "name": "家族アルバム",
-  "short_name": "家族アルバム",
+  "name": "家族ファイル",
+  "short_name": "家族ファイル",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
